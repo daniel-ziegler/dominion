@@ -258,6 +258,20 @@ data Zone =
   | Trash
   deriving (Eq, Ord, Show)
 
+data PlayerZones = PlayerZones
+  { deck :: [CardInstance]
+  , hand :: [CardInstance]
+  , inPlay :: [CardInstance]
+  , discardPile :: [CardInstance]
+  , setAside :: [CardInstance]
+  }
+
+data Zones = Zones
+  { trash :: [CardInstance]
+  , ofPlayer :: [PlayerZones]
+  , supply :: Map.Map Card [CardInstance]
+  }
+
 data Mechanic =
     Buy Card
   | Gain Card PlayerZone
