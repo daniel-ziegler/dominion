@@ -1,0 +1,10 @@
+- Statically type players which support different subsets of the kingdom cards
+  - Can play in any kingdom with a superset of those kingdom cards available
+    - Exceptions:
+      * Black Market
+      * Masquerade & other cards that allow trading
+
+- Enumerable
+- Free Monad vs just interface on the monad
+
+- Do I even need dependent types?

@@ -1,0 +1,46 @@
++ turn history (including the current turn)
+  + who played the turn
+  + the mechanics that happened, in order
++ cards in hand
++ cards in play
+  + duration cards in play
++ number of actions, buys, coins of player with current turn
++ stack of mechanics currently being resolved
+  - durations??
+  - indeed functions like a stack of continuations: here's what's gonna happen next
+    - currently also possible to use it to determine which phase you are in. fine to separate this though.
+  > turn
+    - Outpost?
+    - Mission?
+    - Possession?
+    > action phase
+      > Throne Room 1
+      > Throne Room 2
+      > Witch
+        > +2 cards
+        > opponent gains Curse
+      > move VP tokens from {Arena} to you
+    > buy phase
+      > you may play treasure or move on
+        > play treasure
+          > +1 buy (Pouch)
+      > you may play treasure or move on
+        > move on
+      > you may buy a card or end buys
+        > buy {X}
+          > -{price(X)} coins
+          > gain {X}
+      > you may buy a card or end buys
+        > end buys
+    > night phase
+    > cleanup
+  > opponent's turn
+    > you may topdeck gained card {X} (Tracker / Watchtower)
+      > topdeck card {X}
+    > you may trash gained card {X} (Watchtower)
+      > trash card {X}
+    > Tournament challenge
+      > you may reveal & discard a province
+    > you may reveal a moat
++ current prompt
+  > you may discard unused action for 2 VP (Arena)
