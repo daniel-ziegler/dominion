@@ -1,3 +1,4 @@
+game state (always fed)
 + turn history (including the current turn)
   + who played the turn
   + the mechanics that happened, in order
@@ -7,40 +8,44 @@
 + number of actions, buys, coins of player with current turn
 + stack of mechanics currently being resolved
   - durations??
-  - indeed functions like a stack of continuations: here's what's gonna happen next
-    - currently also possible to use it to determine which phase you are in. fine to separate this though.
+  - NOT JUST CONTINUATIONS! market square can be triggered for a trash that happened before it was drawn...
   > turn
     - Outpost?
     - Mission?
     - Possession?
     > action phase
-      > Throne Room 1
       > Throne Room 2
-      > Witch
-        > +2 cards
-        > opponent gains Curse
-      > move VP tokens from {Arena} to you
     > buy phase
-      > you may play treasure or move on
-        > play treasure
-          > +1 buy (Pouch)
-      > you may play treasure or move on
-        > move on
-      > you may buy a card or end buys
-        > buy {X}
-          > -{price(X)} coins
-          > gain {X}
-      > you may buy a card or end buys
-        > end buys
     > night phase
     > cleanup
   > opponent's turn
-    > you may topdeck gained card {X} (Tracker / Watchtower)
-      > topdeck card {X}
-    > you may trash gained card {X} (Watchtower)
-      > trash card {X}
-    > Tournament challenge
-      > you may reveal & discard a province
-    > you may reveal a moat
-+ current prompt
-  > you may discard unused action for 2 VP (Arena)
+
+current prompt (changes which input & output heads are activated)
+* you may discard unused action for 2 VP (Arena)
+  . discard action A
+    - +2 VP from Arena
+  . discard action B
+    - +2 VP from Arena
+  . pop
+* you may play treasure or move on
+  . play treasure A
+  . play treasure B
+  . pop
+* you may buy a card or end buys
+  . buy {X}
+    - -{price(X)} coins
+    - gain {X}
+  . pop
+* you may topdeck gained card {X} (Tracker / Watchtower)
+  . topdeck card {X}
+  . pop
+* you may trash gained card {X} (Watchtower)
+  . trash card {X}
+  . pop
+* Tournament challenge
+  . reveal province
+    - discard
+  . pop
+* you may reveal a moat
+  . reveal moat
+  . pop

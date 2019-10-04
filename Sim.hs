@@ -273,22 +273,27 @@ data Zones = Zones
   }
 
 data Mechanic =
-    Buy Card
+  | StartTurn Player
+  | ActionPhase
+  | BuyPhase
+  | CleanupPhase
+  | Buy Card
   | Gain Card PlayerZone
   | Discard Card
   | Play Card
+  | Pop
   -- etc
 
 data PlayerPrompt a where
   -- TODO
-  GainOne :: NonEmpty Card -> PlayerPrompt Card
-
+  PickMechanic :: NonEmpty Mechanic -> PlayerPrompt Mechanic
 
 data Turn = Turn Player [Mechanic]
 
 data GameState = GameState
   { zones :: Zone -> [Card]
   , turn :: Turn
+  , contStack :: Mechanic
   , gameLog :: [Turn]
   }
 
@@ -317,7 +322,12 @@ randomChoice = RandomChoice
 playerChoice = PlayerChoice
 
 initState :: GameState
-initState = GameState { zones = (\z -> []), turn = Turn (Player 0) [], gameLog = [] }
+initState = GameState
+  { zones = (\z -> [])
+  , turn = Turn (Player 0) []
+  , contStack = [StartTurn (Player 0)]
+  , gameLog = []
+  }
 
 type PlayerImpl = forall a. PlayerPrompt a -> a
 
@@ -338,8 +348,7 @@ run players gs (RandomChoice xs) = do
 run players gs (PlayerChoice p c) = return (players p $ c, gs)
   
 dummyPlayer :: PlayerImpl
-dummyPlayer (GainOne cs) = NE.head cs
-
+dummyPlayer (PickMechanic ms) = NE.head ms
 
 simTurn :: Player -> Game ()
 simTurn p = return ()
