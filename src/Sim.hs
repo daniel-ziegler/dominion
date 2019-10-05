@@ -1,6 +1,7 @@
 {-# LANGUAGE RankNTypes, GADTs #-}
 module Sim where
 
+import Control.Monad
 import Control.Monad.State.Lazy
 import Control.Monad.Random
 import Control.Monad.Random.Class
@@ -347,25 +348,6 @@ getState f = changeState $ gets f
 
 unimplemented = fail "not implemented"
 
-doAction :: Card -> Game ()
-doAction card = unimplemented
-  
-moveCard :: Card -> Zone -> Zone -> Game ()
-moveCard card from to =
-  if from == to
-  then return ()
-  else changeState $ modify (\gs ->
-    gs {
-      zones = \z ->
-        let old = zones gs z
-        in if z == from
-           then delete card old
-           else
-             if z == to
-             then card : old
-             else old
-    })
-
 upd :: Eq k => k -> v -> (k -> v) -> (k -> v)
 upd changing_k new_v f = \k -> if k == changing_k then new_v else f k
 
@@ -375,6 +357,29 @@ updWith changing_k v_change f = \k -> if k == changing_k then v_change (f k) els
 adjustCounter :: Counter -> Integer -> Game ()
 adjustCounter ctr delta = changeState $ modify (\gs -> 
   gs { counters = updWith ctr (+delta) $ counters gs })
+
+moveCard :: Card -> Zone -> Zone -> Game ()
+moveCard card from to =
+  if from == to
+  then return ()
+  else changeState $ modify (\gs ->
+    gs { zones = updWith from (delete card) $ updWith to (card:) $ zones gs })
+
+draw :: Game Bool
+draw = do
+  activePlayer <- getState turn
+  deck <- getState (`zones` (OfPlayer activePlayer Deck))
+  case deck of
+    [] ->
+      return False
+    (card : deck') -> do
+      moveCard card (OfPlayer activePlayer Deck) (OfPlayer activePlayer Hand)
+      return True
+
+doAction :: Card -> Game ()
+doAction card = case card of
+  Smithy -> replicateM_ 3 draw
+  _      -> unimplemented
 
 actionPhase :: Game ()
 actionPhase = do
