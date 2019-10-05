@@ -245,18 +245,6 @@ originPile card = case card of
   Witch       -> WitchPile
   Artisan     -> ArtisanPile
 
-universe :: (Bounded a, Enum a) => [a]
-universe = [minBound..maxBound]
-
-{- stolen from Relude -}
-inverseMap :: forall a k. (Bounded a, Enum a, Ord k) => (a -> k) -> (k -> Maybe a)
-inverseMap f = \k -> Map.lookup k dict
-    where
-      dict :: Map.Map k a
-      dict = Map.fromList $ zip (map f univ) univ
-      univ :: [a]
-      univ = universe
-
 pileCard = inverseMap originPile .> fromJust
 
 victoryCardCount :: Int -> Int
@@ -278,7 +266,7 @@ initPile nPlayers pile = replicate (initCount pile nPlayers) (pileCard pile)
 newtype Player = Player Int
   deriving (Eq, Ord, Show)
 
-data PlayerZone =
+data PlayerPile =
     Deck
   | Hand
   | InPlay
@@ -286,8 +274,8 @@ data PlayerZone =
   | SetAside  -- TODO: different kinds of set aside zones?
   deriving (Eq, Ord, Show, Bounded, Enum)
 
-data Zone =
-    OfPlayer Player PlayerZone
+data Pile =
+    OfPlayer Player PlayerPile
   | Supply SupplyPile
   | Trash
   deriving (Eq, Ord, Show)
@@ -302,7 +290,7 @@ data Mechanic =
     StartTurn Player
   | Nop
   | Buy SupplyPile
-  | Gain Card PlayerZone
+  | Gain Card PlayerPile
   | DiscardCard Card
   | Play Card
   -- etc
@@ -313,7 +301,7 @@ data PlayerPrompt a where
 
 data GameState = GameState
   { nPlayers :: Int
-  , zones :: Map.Map Zone [Card]
+  , zones :: Map.Map Pile [Card]
   , turn :: Player
   , counters :: Array Counter Int
   }
@@ -360,7 +348,7 @@ initState nPlayers = do
              , counters = initCounters
              }
   where
-    playerCards :: Rand g (Map.Map PlayerZone [Card])
+    playerCards :: Rand g (Map.Map PlayerPile [Card])
     playerCards = do
       cards <- shuffleM $ replicate 3 Estate ++ replicate 7 Copper
       let (hand, deck) = splitAt 5 cards
@@ -397,21 +385,20 @@ modifyState = changeState . modify
 computeCardPrice :: Card -> Game Int
 computeCardPrice = return . cardBasePrice
 
-unimplemented = fail "not implemented"
-
 adjustCounter :: Counter -> Int -> Game ()
 adjustCounter ctr delta = modifyState (\gs ->
-  let oldval = counters gs ! ctr
-  in gs { counters = counters gs // [(ctr, oldval+delta)] })
+  let newval = counters gs ! ctr + delta in
+  if newval < 0 then error $ "underflowed " ++ show ctr
+  else gs { counters = counters gs // [(ctr, newval)] })
 
-moveCard :: Card -> Zone -> Zone -> Game ()
+moveCard :: Card -> Pile -> Pile -> Game ()
 moveCard card from to =
   if from == to
   then return ()
   else modifyState (\gs ->
     gs { zones = Map.adjust (delete card) from $ Map.adjust (card:) to $ zones gs })
 
-movePile :: Zone -> Zone -> Game ()
+movePile :: Pile -> Pile -> Game ()
 movePile from to =
   if from == to
   then return ()
@@ -419,10 +406,30 @@ movePile from to =
     gs { zones = let old = zones gs
                  in Map.insert from [] $ Map.adjust ((zones gs Map.! from)++) to $ old })
 
+gameShuffle :: [a] -> Game [a]
+gameShuffle xs = do
+  seq <- rseq (length xs - 1)
+  return $ shuffle xs seq
+    where
+      rseq :: Int -> Game [Int]
+      rseq 0 = return []
+      rseq i = do
+        first <- randomChoice (0 :| [1..i])
+        rest <- rseq (i-1)
+        return (first : rest)
+
+shufflePile :: Pile -> Game ()
+shufflePile zone = do
+  cards <- getState (\gs -> zones gs Map.! zone)
+  shuffled <- gameShuffle cards
+  modifyState (\gs -> gs { zones = Map.insert zone shuffled $ zones gs })
+
 draw :: Game Bool
 draw = do
   player <- getState turn
   deck <- getState (\gs -> zones gs Map.! (OfPlayer player Deck))
+  when (null deck) $ shufflePile (OfPlayer player Discard)
+           >> movePile (OfPlayer player Discard) (OfPlayer player Deck)
   case deck of
     [] ->
       return False
@@ -434,7 +441,9 @@ playEffect :: Card -> Game ()
 playEffect card = case card of
   Smithy -> replicateM_ 3 draw
   Copper -> adjustCounter Coins 1
-  _      -> unimplemented
+  Silver -> adjustCounter Coins 2
+  Gold   -> adjustCounter Coins 3
+  c      -> error $ "haven't implemented " ++ show c
 
 actionPhase :: Game ()
 actionPhase = do
@@ -465,7 +474,7 @@ playTreasuresPhase = do
       playEffect card
       playTreasuresPhase
 
-gainFrom :: Zone -> Game ()
+gainFrom :: Pile -> Game ()
 gainFrom from = do
   player <- getState turn
   cards <- getState (\gs -> zones gs Map.! from)
@@ -474,22 +483,27 @@ gainFrom from = do
 buyPhase :: Game ()
 buyPhase = do
   player <- getState turn
-  coins <- getState (\gs -> counters gs ! Coins)
-  -- this makes me want to make zones better
-  let pileWithTop (Supply p, c : cs) = Just (p, c)
-      pileWithTop _                   = Nothing
-  pilesWithTops <- getState (zones .> Map.assocs .> mapMaybe pileWithTop)
-  prices <- mapM (snd .> computeCardPrice) pilesWithTops
-  let pilesWithPrices = zip (map fst pilesWithTops) prices
-  let affordablePiles = (pilesWithPrices |> filter (snd .> (<=coins)) |> map fst)
-  choice <- playerChoice player (PickMechanic $ Nop :| map Buy affordablePiles)
-  case choice of
-    Nop -> return ()
-    Buy pile -> do
-      let price = fromJust $ lookup pile pilesWithPrices
-      adjustCounter Coins (-price)
-      gainFrom (Supply pile)
-      buyPhase
+  nActions <- getState ((!Buys) . counters)
+  if nActions == 0
+  then return ()
+  else do
+    coins <- getState (\gs -> counters gs ! Coins)
+    -- this makes me want to make zones better
+    let pileWithTop (Supply p, c : cs) = Just (p, c)
+        pileWithTop _                   = Nothing
+    pilesWithTops <- getState (zones .> Map.assocs .> mapMaybe pileWithTop)
+    prices <- mapM (snd .> computeCardPrice) pilesWithTops
+    let pilesWithPrices = zip (map fst pilesWithTops) prices
+    let affordablePiles = (pilesWithPrices |> filter (snd .> (<=coins)) |> map fst)
+    choice <- playerChoice player (PickMechanic $ Nop :| map Buy affordablePiles)
+    case choice of
+        Nop -> return ()
+        Buy supplyPile -> do
+        let price = fromJust $ lookup supplyPile pilesWithPrices
+        adjustCounter Coins (-price)
+        adjustCounter Buys (-1)
+        gainFrom (Supply supplyPile)
+        buyPhase
 
 cleanupPhase :: Game ()
 cleanupPhase = do
@@ -512,3 +526,18 @@ simTurn = do
   buyPhase
   cleanupPhase
   advanceTurn
+
+universe :: (Bounded a, Enum a) => [a]
+universe = [minBound..maxBound]
+
+counts :: (Ord a) => [a] -> Map.Map a Int
+counts = (`zip` (repeat 1)) .> Map.fromListWith (+)
+
+{- stolen from Relude -}
+inverseMap :: forall a k. (Bounded a, Enum a, Ord k) => (a -> k) -> (k -> Maybe a)
+inverseMap f = \k -> Map.lookup k dict
+    where
+      dict :: Map.Map k a
+      dict = Map.fromList $ zip (map f univ) univ
+      univ :: [a]
+      univ = universe
