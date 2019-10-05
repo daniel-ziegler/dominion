@@ -282,7 +282,7 @@ data PlayerZone =
     Deck
   | Hand
   | InPlay
-  | DiscardPile
+  | Discard
   | SetAside  -- TODO: different kinds of set aside zones?
   deriving (Eq, Ord, Show, Bounded, Enum)
 
@@ -303,7 +303,7 @@ data Mechanic =
   | Nop
   | Buy SupplyPile
   | Gain Card PlayerZone
-  | Discard Card
+  | DiscardCard Card
   | Play Card
   -- etc
 
@@ -312,7 +312,8 @@ data PlayerPrompt a where
   PickMechanic :: NonEmpty Mechanic -> PlayerPrompt Mechanic
 
 data GameState = GameState
-  { zones :: Map.Map Zone [Card]
+  { nPlayers :: Int
+  , zones :: Map.Map Zone [Card]
   , turn :: Player
   , counters :: Array Counter Int
   }
@@ -353,7 +354,8 @@ initState nPlayers = do
                       DuchyPile, ProvincePile, CursePile, SmithyPile
                      ]
   return $ GameState
-             { zones = Map.insert Trash [] $ Map.unions (supplyPiles : allPlayerCards)
+             { nPlayers = nPlayers
+             , zones = Map.insert Trash [] $ Map.unions (supplyPiles : allPlayerCards)
              , turn = Player 0
              , counters = initCounters
              }
@@ -387,7 +389,10 @@ dummyPlayer :: PlayerImpl
 dummyPlayer (PickMechanic ms) = NE.last ms
 
 getState :: (GameState -> a) -> Game a
-getState f = changeState $ gets f
+getState = changeState . gets
+
+modifyState :: (GameState -> GameState) -> Game ()
+modifyState = changeState . modify
 
 computeCardPrice :: Card -> Game Int
 computeCardPrice = return . cardBasePrice
@@ -395,7 +400,7 @@ computeCardPrice = return . cardBasePrice
 unimplemented = fail "not implemented"
 
 adjustCounter :: Counter -> Int -> Game ()
-adjustCounter ctr delta = changeState $ modify (\gs ->
+adjustCounter ctr delta = modifyState (\gs ->
   let oldval = counters gs ! ctr
   in gs { counters = counters gs // [(ctr, oldval+delta)] })
 
@@ -403,8 +408,16 @@ moveCard :: Card -> Zone -> Zone -> Game ()
 moveCard card from to =
   if from == to
   then return ()
-  else changeState $ modify (\gs ->
+  else modifyState (\gs ->
     gs { zones = Map.adjust (delete card) from $ Map.adjust (card:) to $ zones gs })
+
+movePile :: Zone -> Zone -> Game ()
+movePile from to =
+  if from == to
+  then return ()
+  else modifyState (\gs ->
+    gs { zones = let old = zones gs
+                 in Map.insert from [] $ Map.adjust ((zones gs Map.! from)++) to $ old })
 
 draw :: Game Bool
 draw = do
@@ -456,7 +469,7 @@ gainFrom :: Zone -> Game ()
 gainFrom from = do
   player <- getState turn
   cards <- getState (\gs -> zones gs Map.! from)
-  moveCard (head cards) from (OfPlayer player DiscardPile)
+  moveCard (head cards) from (OfPlayer player Discard)
 
 buyPhase :: Game ()
 buyPhase = do
@@ -476,12 +489,26 @@ buyPhase = do
       let price = fromJust $ lookup pile pilesWithPrices
       adjustCounter Coins (-price)
       gainFrom (Supply pile)
+      buyPhase
+
+cleanupPhase :: Game ()
+cleanupPhase = do
+  player <- getState turn
+  movePile (OfPlayer player InPlay) (OfPlayer player Discard)
+  movePile (OfPlayer player Hand) (OfPlayer player Discard)
+  replicateM_ 5 draw
+
+nextPlayer :: Int -> Player -> Player
+nextPlayer nPlayers (Player n) = Player ((n+1) `mod` nPlayers)
+
+advanceTurn :: Game ()
+advanceTurn = do
+  modifyState (\gs -> gs { counters = initCounters, turn = nextPlayer (nPlayers gs) (turn gs) })
 
 simTurn :: Game ()
 simTurn = do
-  -- action phase: while we have actions, pick action card and play or end actions
   actionPhase
-  -- play treasures phase: play treasure or end
   playTreasuresPhase
-  -- buy phase: while we have buys, pick card to buy and buy or end buys
   buyPhase
+  cleanupPhase
+  advanceTurn
