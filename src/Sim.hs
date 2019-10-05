@@ -4,8 +4,10 @@ module Sim where
 import Control.Monad.State.Lazy
 import Control.Monad.Random
 import Control.Monad.Random.Class
+import Control.Monad.Loops
 import qualified Data.List.NonEmpty as NE
-import Data.List.NonEmpty (NonEmpty)
+import Data.List.NonEmpty (NonEmpty(..))
+import Data.List
 import qualified Data.Map as Map
 
 data CardType =
@@ -258,43 +260,29 @@ data Zone =
   | Trash
   deriving (Eq, Ord, Show)
 
-data PlayerZones = PlayerZones
-  { deck :: [CardInstance]
-  , hand :: [CardInstance]
-  , inPlay :: [CardInstance]
-  , discardPile :: [CardInstance]
-  , setAside :: [CardInstance]
-  }
-
-data Zones = Zones
-  { trash :: [CardInstance]
-  , ofPlayer :: [PlayerZones]
-  , supply :: Map.Map Card [CardInstance]
-  }
+data Counter =
+    Actions
+  | Coins
+  | Buys
+  deriving (Eq, Ord, Show)
 
 data Mechanic =
-  | StartTurn Player
-  | ActionPhase
-  | BuyPhase
-  | CleanupPhase
+    StartTurn Player
+  | Nop
   | Buy Card
   | Gain Card PlayerZone
   | Discard Card
   | Play Card
-  | Pop
   -- etc
 
 data PlayerPrompt a where
   -- TODO
   PickMechanic :: NonEmpty Mechanic -> PlayerPrompt Mechanic
 
-data Turn = Turn Player [Mechanic]
-
 data GameState = GameState
   { zones :: Zone -> [Card]
-  , turn :: Turn
-  , contStack :: Mechanic
-  , gameLog :: [Turn]
+  , turn :: Player
+  , counters :: Counter -> Integer
   }
 
 type StateUpdate = State GameState
@@ -321,12 +309,16 @@ changeState = ChangeState
 randomChoice = RandomChoice
 playerChoice = PlayerChoice
 
+initCounters :: Counter -> Integer
+initCounters Actions = 1
+initCounters Coins = 0
+initCounters Buys = 1
+
 initState :: GameState
 initState = GameState
   { zones = (\z -> [])
-  , turn = Turn (Player 0) []
-  , contStack = [StartTurn (Player 0)]
-  , gameLog = []
+  , turn = Player 0
+  , counters = initCounters 
   }
 
 type PlayerImpl = forall a. PlayerPrompt a -> a
@@ -350,10 +342,66 @@ run players gs (PlayerChoice p c) = return (players p $ c, gs)
 dummyPlayer :: PlayerImpl
 dummyPlayer (PickMechanic ms) = NE.head ms
 
-simTurn :: Player -> Game ()
-simTurn p = return ()
+getState :: (GameState -> a) -> Game a
+getState f = changeState $ gets f
 
-main = putStrLn $ show Action
+unimplemented = fail "not implemented"
 
+doAction :: Card -> Game ()
+doAction card = unimplemented
+  
+moveCard :: Card -> Zone -> Zone -> Game ()
+moveCard card from to =
+  if from == to
+  then return ()
+  else changeState $ modify (\gs ->
+    gs {
+      zones = \z ->
+        let old = zones gs z
+        in if z == from
+           then delete card old
+           else
+             if z == to
+             then card : old
+             else old
+    })
+
+upd :: Eq k => k -> v -> (k -> v) -> (k -> v)
+upd changing_k new_v f = \k -> if k == changing_k then new_v else f k
+
+updWith :: Eq k => k -> (v -> v) -> (k -> v) -> (k -> v)
+updWith changing_k v_change f = \k -> if k == changing_k then v_change (f k) else f k
+
+adjustCounter :: Counter -> Integer -> Game ()
+adjustCounter ctr delta = changeState $ modify (\gs -> 
+  gs { counters = updWith ctr (+delta) $ counters gs })
+
+actionPhase :: Game ()
+actionPhase = do
+  activePlayer <- getState turn
+  nActions <- getState (`counters` Actions)
+  if nActions == 0
+  then return ()
+  else do
+    hand <- getState (`zones` (OfPlayer activePlayer Hand)) 
+    choice <- playerChoice activePlayer (PickMechanic $ Nop :| map Play hand)
+    case choice of 
+      Nop -> return ()
+      Play card -> do 
+        moveCard card (OfPlayer activePlayer Hand) (OfPlayer activePlayer InPlay)
+        adjustCounter Actions (-1)
+        doAction card
+        actionPhase
+
+simTurn :: Game ()
+simTurn = do
+  -- action phase: while we have actions, pick action card and play or end actions
+  whileM_
+    (changeState $ do
+      gs <- get
+      return $ counters gs Actions > 0)
+    (return 0)
+  -- play treasures phase: play treasure or end
+  -- buy phase: while we have buys, pick card to buy and buy or end buys
 
 
