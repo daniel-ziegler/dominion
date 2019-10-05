@@ -1,4 +1,4 @@
-{-# LANGUAGE RankNTypes, GADTs, ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell, RankNTypes, GADTs, ScopedTypeVariables, NamedFieldPuns #-}
 module Sim where
 
 import Flow
@@ -272,13 +272,12 @@ data PlayerPile =
   | InPlay
   | Discard
   | SetAside  -- TODO: different kinds of set aside zones?
-  deriving (Eq, Ord, Show, Bounded, Enum)
+  deriving (Eq, Ord, Show, Bounded, Ix)
 
-data Pile =
-    OfPlayer Player PlayerPile
-  | Supply SupplyPile
+data BoardPile =
+    Supply SupplyPile
   | Trash
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Show, Bounded, Ix)
 
 data Counter =
     Actions
@@ -301,7 +300,8 @@ data PlayerPrompt a where
 
 data GameState = GameState
   { nPlayers :: Int
-  , zones :: Map.Map Pile [Card]
+  , playerPiles :: Array Int (Array PlayerPile [Card])
+  , boardPiles :: Array BoardPile
   , turn :: Player
   , counters :: Array Counter Int
   }
@@ -332,7 +332,7 @@ randomChoice = RandomChoice
 playerChoice = PlayerChoice
 
 initCounters :: Array Counter Int
-initCounters = array (minBound, maxBound) [(Actions, 1), (Coins, 0), (Buys, 1)]
+initCounters = completeArray [(Actions, 1), (Coins, 0), (Buys, 1)]
 
 initState :: forall g. RandomGen g => Int -> Rand g GameState
 initState nPlayers = do
@@ -348,12 +348,12 @@ initState nPlayers = do
              , counters = initCounters
              }
   where
-    playerCards :: Rand g (Map.Map PlayerPile [Card])
+    playerCards :: Rand g (Array PlayerPile [Card])
     playerCards = do
       cards <- shuffleM $ replicate 3 Estate ++ replicate 7 Copper
       let (hand, deck) = splitAt 5 cards
-      let allEmpty = Map.fromList [ (pz, []) | pz <- [minBound..maxBound] ]
-      return $ Map.insert Hand hand $ Map.insert Deck deck $ allEmpty
+      let allEmpty = completeArray [ (pz, []) | pz <- [minBound..maxBound] ]
+      return $ allEmpty // [(Hand, hand), (Deck, deck)]
 
 type PlayerImpl = forall a. PlayerPrompt a -> a
 
@@ -390,21 +390,6 @@ adjustCounter ctr delta = modifyState (\gs ->
   let newval = counters gs ! ctr + delta in
   if newval < 0 then error $ "underflowed " ++ show ctr
   else gs { counters = counters gs // [(ctr, newval)] })
-
-moveCard :: Card -> Pile -> Pile -> Game ()
-moveCard card from to =
-  if from == to
-  then return ()
-  else modifyState (\gs ->
-    gs { zones = Map.adjust (delete card) from $ Map.adjust (card:) to $ zones gs })
-
-movePile :: Pile -> Pile -> Game ()
-movePile from to =
-  if from == to
-  then return ()
-  else modifyState (\gs ->
-    gs { zones = let old = zones gs
-                 in Map.insert from [] $ Map.adjust ((zones gs Map.! from)++) to $ old })
 
 gameShuffle :: [a] -> Game [a]
 gameShuffle xs = do
@@ -541,3 +526,6 @@ inverseMap f = \k -> Map.lookup k dict
       dict = Map.fromList $ zip (map f univ) univ
       univ :: [a]
       univ = universe
+
+completeArray :: (Ix i, Bounded i) => [(i, e)] -> Array i e
+completeArray = array (minBound, maxBound)
