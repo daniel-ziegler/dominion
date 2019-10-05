@@ -8,6 +8,7 @@ import Control.Monad.State.Lazy
 import Control.Monad.Random
 import Control.Monad.Random.Class
 import Control.Monad.Loops
+import System.Random.Shuffle
 import qualified Data.List.NonEmpty as NE
 import Data.List.NonEmpty (NonEmpty(..))
 import Data.List
@@ -255,7 +256,7 @@ data PlayerZone =
   | InPlay
   | DiscardPile
   | SetAside  -- TODO: different kinds of set aside zones?
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Show, Bounded, Enum)
 
 data Zone =
     OfPlayer Player PlayerZone
@@ -283,10 +284,11 @@ data PlayerPrompt a where
   PickMechanic :: NonEmpty Mechanic -> PlayerPrompt Mechanic
 
 data GameState = GameState
-  { zones :: Zone -> [Card]
+  { zones :: Map.Map Zone [Card]
   , turn :: Player
   , counters :: Array Counter Integer
   }
+  deriving Show
 
 type StateUpdate = State GameState
 
@@ -315,12 +317,21 @@ playerChoice = PlayerChoice
 initCounters :: Array Counter Integer
 initCounters = array (minBound, maxBound) [(Actions, 1), (Coins, 0), (Buys, 1)]
 
-initState :: GameState
-initState = GameState
-  { zones = (\z -> [])
-  , turn = Player 0
-  , counters = initCounters 
-  }
+initState :: RandomGen g => Int -> Rand g GameState
+initState nPlayers = do
+  allPlayerCards <- mapM (\p -> (Map.mapKeys (OfPlayer $ Player p)) <$> playerCards) [0..nPlayers-1]
+  return $ GameState
+             { zones = Map.insert Trash [] $ Map.unions allPlayerCards
+             , turn = Player 0
+             , counters = initCounters 
+             }
+  where
+    playerCards :: RandomGen g => Rand g (Map.Map PlayerZone [Card])
+    playerCards = do
+      cards <- shuffleM $ replicate 3 Estate ++ replicate 7 Copper
+      let (hand, deck) = splitAt 5 cards
+      let allEmpty = Map.fromList [ (pz, []) | pz <- enumFromTo minBound maxBound ]
+      return $ Map.insert Hand hand $ Map.insert Deck deck $ allEmpty
 
 type PlayerImpl = forall a. PlayerPrompt a -> a
 
@@ -341,18 +352,12 @@ run players gs (RandomChoice xs) = do
 run players gs (PlayerChoice p c) = return (players p $ c, gs)
   
 dummyPlayer :: PlayerImpl
-dummyPlayer (PickMechanic ms) = NE.head ms
+dummyPlayer (PickMechanic ms) = NE.last ms
 
 getState :: (GameState -> a) -> Game a
 getState f = changeState $ gets f
 
 unimplemented = fail "not implemented"
-
-upd :: Eq k => k -> v -> (k -> v) -> (k -> v)
-upd changing_k new_v f = \k -> if k == changing_k then new_v else f k
-
-updWith :: Eq k => k -> (v -> v) -> (k -> v) -> (k -> v)
-updWith changing_k v_change f = \k -> if k == changing_k then v_change (f k) else f k
 
 adjustCounter :: Counter -> Integer -> Game ()
 adjustCounter ctr delta = changeState $ modify (\gs -> 
@@ -364,12 +369,12 @@ moveCard card from to =
   if from == to
   then return ()
   else changeState $ modify (\gs ->
-    gs { zones = updWith from (delete card) $ updWith to (card:) $ zones gs })
+    gs { zones = Map.adjust (delete card) from $ Map.adjust (card:) to $ zones gs })
 
 draw :: Game Bool
 draw = do
   activePlayer <- getState turn
-  deck <- getState (`zones` (OfPlayer activePlayer Deck))
+  deck <- getState (\gs -> zones gs Map.! (OfPlayer activePlayer Deck))
   case deck of
     [] ->
       return False
@@ -377,9 +382,10 @@ draw = do
       moveCard card (OfPlayer activePlayer Deck) (OfPlayer activePlayer Hand)
       return True
 
-doAction :: Card -> Game ()
-doAction card = case card of
+playEffect :: Card -> Game ()
+playEffect card = case card of
   Smithy -> replicateM_ 3 draw
+  Copper -> adjustCounter Coins 1
   _      -> unimplemented
 
 actionPhase :: Game ()
@@ -389,25 +395,32 @@ actionPhase = do
   if nActions == 0
   then return ()
   else do
-    hand <- getState (`zones` (OfPlayer activePlayer Hand)) 
-    choice <- playerChoice activePlayer (PickMechanic $ Nop :| map Play hand)
+    hand <- getState (\gs -> zones gs Map.! (OfPlayer activePlayer Hand)) 
+    choice <- playerChoice activePlayer (PickMechanic $ Nop :| (map Play $ filter (cardHasType Action) hand))
     case choice of 
       Nop -> return ()
       Play card -> do 
         moveCard card (OfPlayer activePlayer Hand) (OfPlayer activePlayer InPlay)
         adjustCounter Actions (-1)
-        doAction card
+        playEffect card
         actionPhase
+
+playTreasuresPhase :: Game ()
+playTreasuresPhase = do
+  activePlayer <- getState turn
+  hand <- getState (\gs -> zones gs Map.! (OfPlayer activePlayer Hand)) 
+  choice <- playerChoice activePlayer (PickMechanic $ Nop :| (map Play $ filter (cardHasType Treasure) hand))
+  case choice of 
+    Nop -> return ()
+    Play card -> do 
+      moveCard card (OfPlayer activePlayer Hand) (OfPlayer activePlayer InPlay)
+      playEffect card
+      playTreasuresPhase
 
 simTurn :: Game ()
 simTurn = do
   -- action phase: while we have actions, pick action card and play or end actions
-  whileM_
-    (changeState $ do
-      gs <- get
-      return $ counters gs ! Actions > 0)
-    (return 0)
+  actionPhase
   -- play treasures phase: play treasure or end
+  playTreasuresPhase
   -- buy phase: while we have buys, pick card to buy and buy or end buys
-
-
