@@ -166,7 +166,7 @@ data BasicSupplyPile =
   | ProvincePile
   | CursePile
   deriving (Eq, Ord, Show)
-                    
+
 data KingdomSupplyPile =
   -- 2
     CellarPile
@@ -246,7 +246,7 @@ originPile card = case card of
   Sentry      -> Kingdom SentryPile
   Witch       -> Kingdom WitchPile
   Artisan     -> Kingdom ArtisanPile
-  
+
 newtype Player = Player Int
   deriving (Eq, Ord, Show)
 
@@ -323,7 +323,7 @@ initState nPlayers = do
   return $ GameState
              { zones = Map.insert Trash [] $ Map.unions allPlayerCards
              , turn = Player 0
-             , counters = initCounters 
+             , counters = initCounters
              }
   where
     playerCards :: RandomGen g => Rand g (Map.Map PlayerZone [Card])
@@ -350,7 +350,7 @@ run players gs (RandomChoice xs) = do
   x <- getRandomChoice xs
   return $ (x, gs)
 run players gs (PlayerChoice p c) = return (players p $ c, gs)
-  
+
 dummyPlayer :: PlayerImpl
 dummyPlayer (PickMechanic ms) = NE.last ms
 
@@ -360,7 +360,7 @@ getState f = changeState $ gets f
 unimplemented = fail "not implemented"
 
 adjustCounter :: Counter -> Integer -> Game ()
-adjustCounter ctr delta = changeState $ modify (\gs -> 
+adjustCounter ctr delta = changeState $ modify (\gs ->
   let oldval = counters gs ! ctr
   in gs { counters = counters gs // [(ctr, oldval+delta)] })
 
@@ -395,11 +395,11 @@ actionPhase = do
   if nActions == 0
   then return ()
   else do
-    hand <- getState (\gs -> zones gs Map.! (OfPlayer activePlayer Hand)) 
+    hand <- getState (\gs -> zones gs Map.! (OfPlayer activePlayer Hand))
     choice <- playerChoice activePlayer (PickMechanic $ Nop :| (map Play $ filter (cardHasType Action) hand))
-    case choice of 
+    case choice of
       Nop -> return ()
-      Play card -> do 
+      Play card -> do
         moveCard card (OfPlayer activePlayer Hand) (OfPlayer activePlayer InPlay)
         adjustCounter Actions (-1)
         playEffect card
@@ -408,11 +408,11 @@ actionPhase = do
 playTreasuresPhase :: Game ()
 playTreasuresPhase = do
   activePlayer <- getState turn
-  hand <- getState (\gs -> zones gs Map.! (OfPlayer activePlayer Hand)) 
+  hand <- getState (\gs -> zones gs Map.! (OfPlayer activePlayer Hand))
   choice <- playerChoice activePlayer (PickMechanic $ Nop :| (map Play $ filter (cardHasType Treasure) hand))
-  case choice of 
+  case choice of
     Nop -> return ()
-    Play card -> do 
+    Play card -> do
       moveCard card (OfPlayer activePlayer Hand) (OfPlayer activePlayer InPlay)
       playEffect card
       playTreasuresPhase
