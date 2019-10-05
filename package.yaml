@@ -22,6 +22,7 @@ description:         Please see the README on GitHub at <https://github.com/gith
 dependencies:
 - base >= 4.7 && < 5
 - containers >= 0.6 && <1
+- array >= 0.5 && <1
 - mtl >= 2.2.2 && <3
 - MonadRandom >= 0.5 && <1
 - monad-loops >= 0.4 && <1

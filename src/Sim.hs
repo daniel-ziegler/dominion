@@ -1,6 +1,8 @@
 {-# LANGUAGE RankNTypes, GADTs #-}
 module Sim where
 
+import Data.Ix
+import Data.Array.IArray
 import Control.Monad
 import Control.Monad.State.Lazy
 import Control.Monad.Random
@@ -265,7 +267,7 @@ data Counter =
     Actions
   | Coins
   | Buys
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Show, Bounded, Ix)
 
 data Mechanic =
     StartTurn Player
@@ -283,7 +285,7 @@ data PlayerPrompt a where
 data GameState = GameState
   { zones :: Zone -> [Card]
   , turn :: Player
-  , counters :: Counter -> Integer
+  , counters :: Array Counter Integer
   }
 
 type StateUpdate = State GameState
@@ -310,10 +312,8 @@ changeState = ChangeState
 randomChoice = RandomChoice
 playerChoice = PlayerChoice
 
-initCounters :: Counter -> Integer
-initCounters Actions = 1
-initCounters Coins = 0
-initCounters Buys = 1
+initCounters :: Array Counter Integer
+initCounters = array (minBound, maxBound) [(Actions, 1), (Coins, 0), (Buys, 1)]
 
 initState :: GameState
 initState = GameState
@@ -356,7 +356,8 @@ updWith changing_k v_change f = \k -> if k == changing_k then v_change (f k) els
 
 adjustCounter :: Counter -> Integer -> Game ()
 adjustCounter ctr delta = changeState $ modify (\gs -> 
-  gs { counters = updWith ctr (+delta) $ counters gs })
+  let oldval = counters gs ! ctr
+  in gs { counters = counters gs // [(ctr, oldval+delta)] })
 
 moveCard :: Card -> Zone -> Zone -> Game ()
 moveCard card from to =
@@ -384,7 +385,7 @@ doAction card = case card of
 actionPhase :: Game ()
 actionPhase = do
   activePlayer <- getState turn
-  nActions <- getState (`counters` Actions)
+  nActions <- getState ((!Actions) . counters)
   if nActions == 0
   then return ()
   else do
@@ -404,7 +405,7 @@ simTurn = do
   whileM_
     (changeState $ do
       gs <- get
-      return $ counters gs Actions > 0)
+      return $ counters gs ! Actions > 0)
     (return 0)
   -- play treasures phase: play treasure or end
   -- buy phase: while we have buys, pick card to buy and buy or end buys

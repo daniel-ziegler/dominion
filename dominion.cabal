@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: cf22a1356c8406f060e3e43b91ceea86e0d19511b66e3b924aa8f4f02c7ac562
+-- hash: 33a9880816b9a73f3895ab397937e395c25f0518cfeb79f114aba739b20dd0b4
 
 name:           dominion
 version:        0.1.0.0
@@ -34,6 +34,7 @@ library
       src
   build-depends:
       MonadRandom >=0.5 && <1
+    , array >=0.5 && <1
     , base >=4.7 && <5
     , containers >=0.6 && <1
     , monad-loops >=0.4 && <1
@@ -49,6 +50,7 @@ executable dominion-exe
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       MonadRandom >=0.5 && <1
+    , array >=0.5 && <1
     , base >=4.7 && <5
     , containers >=0.6 && <1
     , dominion
@@ -66,6 +68,7 @@ test-suite dominion-test
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       MonadRandom >=0.5 && <1
+    , array >=0.5 && <1
     , base >=4.7 && <5
     , containers >=0.6 && <1
     , dominion
