@@ -268,7 +268,9 @@ initPile nPlayers pile = replicate (initCount pile nPlayers) (pileCard pile)
 
 newtype Player =
   Player Int
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Show, Ix)
+
+playerIndex (Player i) = i
 
 data PlayerPile
   = Deck
@@ -276,12 +278,13 @@ data PlayerPile
   | InPlay
   | Discard
   | SetAside -- TODO: different kinds of set aside zones?
-  deriving (Eq, Ord, Show, Bounded, Ix)
+  deriving (Eq, Ord, Show, Bounded, Enum, Ix)
 
-data BoardPile
-  = Supply SupplyPile
+data Pile
+  = PlayerPile Player PlayerPile
+  | Supply SupplyPile
   | Trash
-  deriving (Eq, Ord, Show, Bounded, Ix)
+  deriving (Eq, Ord, Show)
 
 data Counter
   = Actions
@@ -303,13 +306,15 @@ data PlayerPrompt a where
 
 data GameState =
   GameState
-    { nPlayers :: Int
-    , playerPiles :: Array Int (Array PlayerPile [Card])
-    , boardPiles :: Array BoardPile
+    { playerPiles :: Array Player (Array PlayerPile [Card])
+    , supply :: Map.Map SupplyPile [Card]
+    , trash :: [Card]
     , turn :: Player
     , counters :: Array Counter Int
     }
   deriving (Show)
+
+nPlayers (GameState {playerPiles}) = 1 + (playerIndex $ snd $ bounds playerPiles)
 
 type StateUpdate = State GameState
 
@@ -345,10 +350,11 @@ initState ::
   => Int
   -> Rand g GameState
 initState nPlayers = do
-  allPlayerCards <-
-    mapM (\p -> (Map.mapKeys (OfPlayer $ Player p)) <$> playerCards) [0 .. nPlayers - 1]
+  allPlayerPiles <- replicateM nPlayers playerPiles
+  let playerPiles =
+        array (Player 0, Player $ nPlayers - 1) $
+        zip ([0 .. nPlayers - 1] |> map Player) allPlayerPiles
   let supplyPiles =
-        Map.mapKeys Supply $
         Map.fromSet (initPile nPlayers) $
         Set.fromList
           [ CopperPile
@@ -362,14 +368,15 @@ initState nPlayers = do
           ]
   return $
     GameState
-      { nPlayers = nPlayers
-      , zones = Map.insert Trash [] $ Map.unions (supplyPiles : allPlayerCards)
+      { playerPiles = playerPiles
+      , supply = supplyPiles
+      , trash = []
       , turn = Player 0
       , counters = initCounters
       }
   where
-    playerCards :: Rand g (Array PlayerPile [Card])
-    playerCards = do
+    playerPiles :: Rand g (Array PlayerPile [Card])
+    playerPiles = do
       cards <- shuffleM $ replicate 3 Estate ++ replicate 7 Copper
       let (hand, deck) = splitAt 5 cards
       let allEmpty = completeArray [(pz, []) | pz <- [minBound .. maxBound]]
@@ -405,6 +412,13 @@ modifyState = changeState . modify
 computeCardPrice :: Card -> Game Int
 computeCardPrice = return . cardBasePrice
 
+computeCardScore :: Card -> Game Int
+computeCardScore Curse = return (-1)
+computeCardScore Estate = return 1
+computeCardScore Duchy = return 3
+computeCardScore Province = return 5
+computeCardScore _ = return 0
+
 adjustCounter :: Counter -> Int -> Game ()
 adjustCounter ctr delta =
   modifyState
@@ -426,23 +440,71 @@ gameShuffle xs = do
       rest <- rseq (i - 1)
       return (first : rest)
 
+getPile :: Pile -> Game [Card]
+getPile pile = getState $ getPile' pile
+  where
+    getPile' (PlayerPile player playerPile) gs = playerPiles gs ! player ! playerPile
+    getPile' (Supply supplyPile) gs = supply gs Map.! supplyPile
+    getPile' Trash gs = trash gs
+
+setPile :: Pile -> [Card] -> Game ()
+setPile pile cards = modifyState $ setPile' pile
+  where
+    setPile' (PlayerPile player playerPile) gs =
+      let forPlayer = playerPiles gs ! player
+          forPlayer' = forPlayer // [(playerPile, cards)]
+       in gs {playerPiles = playerPiles gs // [(player, forPlayer')]}
+    setPile' (Supply supplyPile) gs = gs {supply = Map.insert supplyPile cards $ supply gs}
+    setPile' Trash gs = gs {trash = cards}
+
+modifyPile :: Pile -> ([Card] -> [Card]) -> Game ()
+modifyPile pile f = do
+  cards <- getPile pile
+  setPile pile (f cards)
+
+movePile :: Pile -> Pile -> Game ()
+movePile from to = do
+  cards <- getPile from
+  setPile from []
+  modifyPile to (cards ++)
+
+moveTopCard :: Pile -> Pile -> Game Bool
+moveTopCard from to = do
+  cards <- getPile from
+  case cards of
+    c:cards' -> do
+      modifyPile from tail
+      modifyPile to (c :)
+      return True
+    [] -> return False
+
+moveCard :: Card -> Pile -> Pile -> Game Bool
+moveCard card from to = do
+  cards <- getPile from
+  if card `elem` cards
+    then do
+      modifyPile from (delete card)
+      modifyPile to (card :)
+      return True
+    else return False
+
 shufflePile :: Pile -> Game ()
-shufflePile zone = do
-  cards <- getState (\gs -> zones gs Map.! zone)
+shufflePile pile = do
+  cards <- getPile pile
   shuffled <- gameShuffle cards
-  modifyState (\gs -> gs {zones = Map.insert zone shuffled $ zones gs})
+  setPile pile shuffled
 
 draw :: Game Bool
 draw = do
   player <- getState turn
-  deck <- getState (\gs -> zones gs Map.! (OfPlayer player Deck))
+  deck <- getPile (PlayerPile player Deck)
   when (null deck) $
-    shufflePile (OfPlayer player Discard) >>
-    movePile (OfPlayer player Discard) (OfPlayer player Deck)
-  case deck of
-    [] -> return False
-    (card:deck') -> do
-      moveCard card (OfPlayer player Deck) (OfPlayer player Hand)
+    shufflePile (PlayerPile player Discard) >>
+    movePile (PlayerPile player Discard) (PlayerPile player Deck)
+  if (null deck)
+    then return False
+    else do
+      moveTopCard (PlayerPile player Deck) (PlayerPile player Hand)
       return True
 
 playEffect :: Card -> Game ()
@@ -461,13 +523,13 @@ actionPhase = do
   if nActions == 0
     then return ()
     else do
-      hand <- getState (\gs -> zones gs Map.! (OfPlayer player Hand))
+      hand <- getPile (PlayerPile player Hand)
       choice <-
         playerChoice player (PickMechanic $ Nop :| (map Play $ filter (cardHasType Action) hand))
       case choice of
         Nop -> return ()
         Play card -> do
-          moveCard card (OfPlayer player Hand) (OfPlayer player InPlay)
+          moveCard card (PlayerPile player Hand) (PlayerPile player InPlay)
           adjustCounter Actions (-1)
           playEffect card
           actionPhase
@@ -475,34 +537,33 @@ actionPhase = do
 playTreasuresPhase :: Game ()
 playTreasuresPhase = do
   player <- getState turn
-  hand <- getState (\gs -> zones gs Map.! (OfPlayer player Hand))
+  hand <- getPile (PlayerPile player Hand)
   choice <-
     playerChoice player (PickMechanic $ Nop :| (map Play $ filter (cardHasType Treasure) hand))
   case choice of
     Nop -> return ()
     Play card -> do
-      moveCard card (OfPlayer player Hand) (OfPlayer player InPlay)
+      moveCard card (PlayerPile player Hand) (PlayerPile player InPlay)
       playEffect card
       playTreasuresPhase
 
 gainFrom :: Pile -> Game ()
 gainFrom from = do
   player <- getState turn
-  cards <- getState (\gs -> zones gs Map.! from)
-  moveCard (head cards) from (OfPlayer player Discard)
+  moveTopCard from (PlayerPile player Discard)
+  return ()
 
 buyPhase :: Game ()
 buyPhase = do
   player <- getState turn
-  nActions <- getState ((! Buys) . counters)
-  if nActions == 0
+  nBuys <- getState ((! Buys) . counters)
+  if nBuys == 0
     then return ()
     else do
       coins <- getState (\gs -> counters gs ! Coins)
-      -- this makes me want to make zones better
-      let pileWithTop (Supply p, c:cs) = Just (p, c)
+      let pileWithTop (p, c:cs) = Just (p, c)
           pileWithTop _ = Nothing
-      pilesWithTops <- getState (zones .> Map.assocs .> mapMaybe pileWithTop)
+      pilesWithTops <- getState (supply .> Map.assocs .> mapMaybe pileWithTop)
       prices <- mapM (snd .> computeCardPrice) pilesWithTops
       let pilesWithPrices = zip (map fst pilesWithTops) prices
       let affordablePiles = (pilesWithPrices |> filter (snd .> (<= coins)) |> map fst)
@@ -519,8 +580,8 @@ buyPhase = do
 cleanupPhase :: Game ()
 cleanupPhase = do
   player <- getState turn
-  movePile (OfPlayer player InPlay) (OfPlayer player Discard)
-  movePile (OfPlayer player Hand) (OfPlayer player Discard)
+  movePile (PlayerPile player InPlay) (PlayerPile player Discard)
+  movePile (PlayerPile player Hand) (PlayerPile player Discard)
   replicateM_ 5 draw
 
 nextPlayer :: Int -> Player -> Player
@@ -530,13 +591,34 @@ advanceTurn :: Game ()
 advanceTurn = do
   modifyState (\gs -> gs {counters = initCounters, turn = nextPlayer (nPlayers gs) (turn gs)})
 
-simTurn :: Game ()
-simTurn = do
+isGameOver :: Game Bool
+isGameOver = do
+  supplyPiles <- getState supply
+  let emptyPiles = Map.filter null supplyPiles
+  return $ Map.member ProvincePile emptyPiles || Map.size emptyPiles >= 3
+
+doTurn :: Game ()
+doTurn = do
   actionPhase
   playTreasuresPhase
   buyPhase
   cleanupPhase
   advanceTurn
+
+playerScore :: Player -> Game Int
+playerScore p = do
+  piles <- getState (\gs -> playerPiles gs ! p)
+  let allCards = concat $ elems piles
+  cardScores <- mapM computeCardScore allCards
+  return $ sum cardScores
+
+game :: Game [Int]
+game = do
+  whileM_ (not <$> isGameOver) doTurn
+  n <- getState nPlayers
+  map Player [0 .. n - 1] |> mapM playerScore
+
+dummyRun st game = evalRandIO $ run (const dummyPlayer) st game
 
 universe :: (Bounded a, Enum a) => [a]
 universe = [minBound .. maxBound]
