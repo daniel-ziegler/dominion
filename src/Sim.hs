@@ -293,10 +293,9 @@ data Counter
   deriving (Eq, Ord, Show, Bounded, Ix)
 
 data Mechanic
-  = StartTurn Player
-  | Nop
+  = Nop
   | Buy SupplyPile
-  | Gain Card PlayerPile
+  | Gain PlayerPile Pile
   | DiscardCard Card
   | Play Card
   -- etc
@@ -507,15 +506,6 @@ draw = do
       moveTopCard (PlayerPile player Deck) (PlayerPile player Hand)
       return True
 
-playEffect :: Card -> Game ()
-playEffect card =
-  case card of
-    Smithy -> replicateM_ 3 draw
-    Copper -> adjustCounter Coins 1
-    Silver -> adjustCounter Coins 2
-    Gold -> adjustCounter Coins 3
-    c -> error $ "haven't implemented " ++ show c
-
 actionPhase :: Game ()
 actionPhase = do
   player <- getState turn
@@ -526,13 +516,8 @@ actionPhase = do
       hand <- getPile (PlayerPile player Hand)
       choice <-
         playerChoice player (PickMechanic $ Nop :| (map Play $ filter (cardHasType Action) hand))
-      case choice of
-        Nop -> return ()
-        Play card -> do
-          moveCard card (PlayerPile player Hand) (PlayerPile player InPlay)
-          adjustCounter Actions (-1)
-          playEffect card
-          actionPhase
+      didSomething <- doMechanic choice
+      when didSomething actionPhase
 
 playTreasuresPhase :: Game ()
 playTreasuresPhase = do
@@ -547,11 +532,16 @@ playTreasuresPhase = do
       playEffect card
       playTreasuresPhase
 
-gainFrom :: Pile -> Game ()
-gainFrom from = do
-  player <- getState turn
-  moveTopCard from (PlayerPile player Discard)
-  return ()
+pilePrice :: SupplyPile -> Game (Maybe Int)
+pilePrice pile = do
+  cards <- getState (\gs -> supply gs Map.! pile)
+  case cards of
+    [] -> return Nothing
+    (c:cards') -> Just <$> computeCardPrice c
+
+priceFilteredSupplyPiles :: (Int -> Bool) -> Game [SupplyPile]
+priceFilteredSupplyPiles goodPrice = do
+  getState (supply .> Map.keys) >>= filterM (\p -> any goodPrice <$> pilePrice p)
 
 buyPhase :: Game ()
 buyPhase = do
@@ -561,21 +551,10 @@ buyPhase = do
     then return ()
     else do
       coins <- getState (\gs -> counters gs ! Coins)
-      let pileWithTop (p, c:cs) = Just (p, c)
-          pileWithTop _ = Nothing
-      pilesWithTops <- getState (supply .> Map.assocs .> mapMaybe pileWithTop)
-      prices <- mapM (snd .> computeCardPrice) pilesWithTops
-      let pilesWithPrices = zip (map fst pilesWithTops) prices
-      let affordablePiles = (pilesWithPrices |> filter (snd .> (<= coins)) |> map fst)
+      affordablePiles <- priceFilteredSupplyPiles (<= coins)
       choice <- playerChoice player (PickMechanic $ Nop :| map Buy affordablePiles)
-      case choice of
-        Nop -> return ()
-        Buy supplyPile -> do
-          let price = fromJust $ lookup supplyPile pilesWithPrices
-          adjustCounter Coins (-price)
-          adjustCounter Buys (-1)
-          gainFrom (Supply supplyPile)
-          buyPhase
+      boughtSomething <- doMechanic choice
+      when boughtSomething buyPhase
 
 cleanupPhase :: Game ()
 cleanupPhase = do
@@ -591,12 +570,6 @@ advanceTurn :: Game ()
 advanceTurn = do
   modifyState (\gs -> gs {counters = initCounters, turn = nextPlayer (nPlayers gs) (turn gs)})
 
-isGameOver :: Game Bool
-isGameOver = do
-  supplyPiles <- getState supply
-  let emptyPiles = Map.filter null supplyPiles
-  return $ Map.member ProvincePile emptyPiles || Map.size emptyPiles >= 3
-
 doTurn :: Game ()
 doTurn = do
   actionPhase
@@ -604,6 +577,42 @@ doTurn = do
   buyPhase
   cleanupPhase
   advanceTurn
+
+doMechanic :: Mechanic -> Game Bool
+doMechanic Nop = return False
+doMechanic (Buy supplyPile) = do
+  price <- fromJust <$> pilePrice supplyPile
+  adjustCounter Coins (-price)
+  adjustCounter Buys (-1)
+  doMechanic $ Gain Hand (Supply supplyPile)
+doMechanic (Gain to from) = do
+  player <- getState turn
+  moveTopCard from (PlayerPile player to)
+doMechanic (Play card) = do
+  player <- getState turn
+  moveCard card (PlayerPile player Hand) (PlayerPile player InPlay)
+  adjustCounter Actions (-1)
+  playEffect card
+  return True
+
+playEffect card = do
+  player <- getState turn
+  case card of
+    Copper -> adjustCounter Coins 1
+    Silver -> adjustCounter Coins 2
+    Gold -> adjustCounter Coins 3
+    {- Artisan -> do
+      gainOptions <- priceFilteredSupplyPiles (\p -> 0 <= p && p <= 5)
+      choice <- playerChoice player (PickMechanic $ Nop :| (map (Gain Hand) gainOptions))
+      case choice of -}
+    Smithy -> replicateM_ 3 draw
+    c -> error $ "haven't implemented " ++ show c
+
+isGameOver :: Game Bool
+isGameOver = do
+  supplyPiles <- getState supply
+  let emptyPiles = Map.filter null supplyPiles
+  return $ Map.member ProvincePile emptyPiles || Map.size emptyPiles >= 3
 
 playerScore :: Player -> Game Int
 playerScore p = do
