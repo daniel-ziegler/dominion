@@ -15,7 +15,7 @@ import Control.Monad.State.Lazy
 import Data.Array.IArray
 import Data.Ix
 import Data.List
-import Data.List.NonEmpty (NonEmpty(..))
+import Data.List.NonEmpty (NonEmpty(..), nonEmpty)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map as Map
 import Data.Maybe
@@ -277,7 +277,8 @@ data PlayerPile
   | Hand
   | InPlay
   | Discard
-  | SetAside -- TODO: different kinds of set aside zones?
+  | SetAside
+  | Selecting
   deriving (Eq, Ord, Show, Bounded, Enum, Ix)
 
 data Pile
@@ -294,10 +295,13 @@ data Counter
 
 data Mechanic
   = Nop
-  | Buy SupplyPile
-  | Gain PlayerPile Pile
-  | DiscardCard Card
-  | Play Card
+  | Play Player Card
+  | Buy Player SupplyPile
+  -- TODO switch to CardInstance so this is less stupid
+  | Gain Player Pile PlayerPile
+  | DiscardFrom Player PlayerPile Card
+  | TopdeckFrom Player PlayerPile Card
+  | TrashFrom Player PlayerPile Card
   -- etc
 
 data PlayerPrompt a where
@@ -363,6 +367,8 @@ initState nPlayers = do
           , DuchyPile
           , ProvincePile
           , CursePile
+          , ArtisanPile
+          , BanditPile
           , SmithyPile
           ]
   return $
@@ -381,7 +387,9 @@ initState nPlayers = do
       let allEmpty = completeArray [(pz, []) | pz <- [minBound .. maxBound]]
       return $ allEmpty // [(Hand, hand), (Deck, deck)]
 
-type PlayerImpl = forall a. PlayerPrompt a -> a
+type PlayerImpl
+   = forall g a. RandomGen g =>
+                   PlayerPrompt a -> Rand g a
 
 getRandomChoice :: RandomGen g => NonEmpty a -> Rand g a
 getRandomChoice xs = do
@@ -397,10 +405,12 @@ run players gs (ChangeState u) = return $ runState u gs
 run players gs (RandomChoice xs) = do
   x <- getRandomChoice xs
   return $ (x, gs)
-run players gs (PlayerChoice p c) = return (players p $ c, gs)
+run players gs (PlayerChoice p c) = do
+  choice <- players p $ c
+  return (choice, gs)
 
 dummyPlayer :: PlayerImpl
-dummyPlayer (PickMechanic ms) = NE.last ms
+dummyPlayer (PickMechanic ms) = getRandomChoice ms
 
 getState :: (GameState -> a) -> Game a
 getState = changeState . gets
@@ -477,6 +487,13 @@ moveTopCard from to = do
       return True
     [] -> return False
 
+moveTopCards :: Int -> Pile -> Pile -> Game Int
+moveTopCards n from to = do
+  cards <- take n <$> getPile from
+  modifyPile from (drop n)
+  modifyPile to (cards ++)
+  return $ length cards
+
 moveCard :: Card -> Pile -> Pile -> Game Bool
 moveCard card from to = do
   cards <- getPile from
@@ -500,11 +517,7 @@ draw = do
   when (null deck) $
     shufflePile (PlayerPile player Discard) >>
     movePile (PlayerPile player Discard) (PlayerPile player Deck)
-  if (null deck)
-    then return False
-    else do
-      moveTopCard (PlayerPile player Deck) (PlayerPile player Hand)
-      return True
+  moveTopCard (PlayerPile player Deck) (PlayerPile player Hand)
 
 actionPhase :: Game ()
 actionPhase = do
@@ -515,7 +528,9 @@ actionPhase = do
     else do
       hand <- getPile (PlayerPile player Hand)
       choice <-
-        playerChoice player (PickMechanic $ Nop :| (map Play $ filter (cardHasType Action) hand))
+        playerChoice
+          player
+          (PickMechanic $ Nop :| (map (Play player) $ filter (cardHasType Action) hand))
       didSomething <- doMechanic choice
       when didSomething actionPhase
 
@@ -524,10 +539,12 @@ playTreasuresPhase = do
   player <- getState turn
   hand <- getPile (PlayerPile player Hand)
   choice <-
-    playerChoice player (PickMechanic $ Nop :| (map Play $ filter (cardHasType Treasure) hand))
+    playerChoice
+      player
+      (PickMechanic $ Nop :| (map (Play player) $ filter (cardHasType Treasure) hand))
   case choice of
     Nop -> return ()
-    Play card -> do
+    Play _ card -> do
       moveCard card (PlayerPile player Hand) (PlayerPile player InPlay)
       playEffect card
       playTreasuresPhase
@@ -552,7 +569,7 @@ buyPhase = do
     else do
       coins <- getState (\gs -> counters gs ! Coins)
       affordablePiles <- priceFilteredSupplyPiles (<= coins)
-      choice <- playerChoice player (PickMechanic $ Nop :| map Buy affordablePiles)
+      choice <- playerChoice player (PickMechanic $ Nop :| map (Buy player) affordablePiles)
       boughtSomething <- doMechanic choice
       when boughtSomething buyPhase
 
@@ -580,20 +597,63 @@ doTurn = do
 
 doMechanic :: Mechanic -> Game Bool
 doMechanic Nop = return False
-doMechanic (Buy supplyPile) = do
+doMechanic (Buy player supplyPile) = do
   price <- fromJust <$> pilePrice supplyPile
   adjustCounter Coins (-price)
   adjustCounter Buys (-1)
-  doMechanic $ Gain Hand (Supply supplyPile)
-doMechanic (Gain to from) = do
-  player <- getState turn
+  doMechanic $ Gain player (Supply supplyPile) Hand
+doMechanic (Gain player from to) = do
   moveTopCard from (PlayerPile player to)
-doMechanic (Play card) = do
+doMechanic (Play player card) = do
+  moved <- moveCard card (PlayerPile player Hand) (PlayerPile player InPlay)
+  if not moved
+    then error ("no " ++ show card ++ " in hand to play")
+    else do
+      adjustCounter Actions (-1)
+      playEffect card
+      return True
+doMechanic (DiscardFrom player from card) = do
+  moveCard card (PlayerPile player from) (PlayerPile player Discard)
+doMechanic (TopdeckFrom player from card) = do
+  moveCard card (PlayerPile player from) (PlayerPile player Deck)
+doMechanic (TrashFrom player from card) = do
+  moveCard card (PlayerPile player from) Trash
+
+allPlayers :: Game [Player]
+allPlayers = do
+  n <- getState nPlayers
+  return $ map Player [0 .. n - 1]
+
+allOtherPlayersDo :: (Player -> Game ()) -> Game ()
+allOtherPlayersDo f = do
   player <- getState turn
-  moveCard card (PlayerPile player Hand) (PlayerPile player InPlay)
-  adjustCounter Actions (-1)
-  playEffect card
-  return True
+  players <- allPlayers
+  filter (/= player) players |> mapM_ f
+
+pickMechanicUntilQuit :: Player -> Game [Mechanic] -> Game ()
+pickMechanicUntilQuit player getChoices = do
+  choices <- getChoices
+  choice <- playerChoice player (PickMechanic $ Nop :| choices)
+  case choice of
+    Nop -> return ()
+    _ -> doMechanic choice >> pickMechanicUntilQuit player getChoices
+
+pickMechanicUntilEmpty :: Player -> Game [Mechanic] -> Game ()
+pickMechanicUntilEmpty player getChoices = do
+  choices <- nonEmpty <$> getChoices
+  case choices of
+    Nothing -> return ()
+    Just choices -> do
+      choice <- playerChoice player (PickMechanic choices)
+      doMechanic choice >> pickMechanicUntilEmpty player getChoices
+
+pickMechanicUnlessEmpty :: Player -> [Mechanic] -> Game Bool
+pickMechanicUnlessEmpty player choices = do
+  case nonEmpty choices of
+    Nothing -> return False
+    Just choices -> do
+      choice <- playerChoice player (PickMechanic choices)
+      doMechanic choice
 
 playEffect card = do
   player <- getState turn
@@ -601,10 +661,41 @@ playEffect card = do
     Copper -> adjustCounter Coins 1
     Silver -> adjustCounter Coins 2
     Gold -> adjustCounter Coins 3
-    {- Artisan -> do
-      gainOptions <- priceFilteredSupplyPiles (\p -> 0 <= p && p <= 5)
-      choice <- playerChoice player (PickMechanic $ Nop :| (map (Gain Hand) gainOptions))
-      case choice of -}
+    Artisan -> do
+      gainOptions <- nonEmpty <$> priceFilteredSupplyPiles (\p -> 0 <= p && p <= 5)
+      case gainOptions of
+        Nothing -> return ()
+        Just gainOptions -> do
+          choice <-
+            playerChoice
+              player
+              (PickMechanic $ NE.map (\p -> Gain player (Supply p) Hand) gainOptions)
+          void $ doMechanic choice
+      topdeckOptions <- nonEmpty <$> getPile (PlayerPile player Hand)
+      case topdeckOptions of
+        Nothing -> return ()
+        Just topdeckOptions -> do
+          choice <-
+            playerChoice
+              player
+              (PickMechanic $ NE.map (\c -> TopdeckFrom player Hand c) topdeckOptions)
+          void $ doMechanic choice
+    Bandit -> do
+      doMechanic (Gain player (Supply GoldPile) Discard)
+      allOtherPlayersDo $ \otherPlayer -> do
+        moveTopCards 2 (PlayerPile otherPlayer Deck) (PlayerPile otherPlayer Selecting)
+        cards <- getPile (PlayerPile otherPlayer Selecting)
+        let choices = cards |> filter (\c -> cardHasType Treasure c && c /= Copper)
+        pickMechanicUnlessEmpty otherPlayer $ map (TrashFrom otherPlayer Selecting) choices
+        movePile (PlayerPile otherPlayer Selecting) (PlayerPile otherPlayer Discard)
+    Sentry -> do
+      moveTopCards 2 (PlayerPile player Deck) (PlayerPile player Selecting)
+      pickMechanicUntilQuit player $
+        map (TrashFrom player Selecting) <$> getPile (PlayerPile player Selecting)
+      pickMechanicUntilQuit player $
+        map (DiscardFrom player Selecting) <$> getPile (PlayerPile player Selecting)
+      pickMechanicUntilEmpty player $
+        map (TopdeckFrom player Selecting) <$> getPile (PlayerPile player Selecting)
     Smithy -> replicateM_ 3 draw
     c -> error $ "haven't implemented " ++ show c
 
@@ -624,8 +715,7 @@ playerScore p = do
 game :: Game [Int]
 game = do
   whileM_ (not <$> isGameOver) doTurn
-  n <- getState nPlayers
-  map Player [0 .. n - 1] |> mapM playerScore
+  allPlayers >>= mapM playerScore
 
 dummyRun st game = evalRandIO $ run (const dummyPlayer) st game
 
