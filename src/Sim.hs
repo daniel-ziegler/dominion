@@ -350,9 +350,9 @@ initCounters :: Array Counter Int
 initCounters = completeArray [(Actions, 1), (Coins, 0), (Buys, 1)]
 
 initState ::
-     forall g. RandomGen g
+     forall m. MonadRandom m
   => Int
-  -> Rand g GameState
+  -> m GameState
 initState nPlayers = do
   allPlayerPiles <- replicateM nPlayers playerPiles
   let playerPiles =
@@ -383,23 +383,21 @@ initState nPlayers = do
       , counters = initCounters
       }
   where
-    playerPiles :: Rand g (Array PlayerPile [Card])
+    playerPiles :: m (Array PlayerPile [Card])
     playerPiles = do
       cards <- shuffleM $ replicate 3 Estate ++ replicate 7 Copper
       let (hand, deck) = splitAt 5 cards
       let allEmpty = completeArray [(pz, []) | pz <- [minBound .. maxBound]]
       return $ allEmpty // [(Hand, hand), (Deck, deck)]
 
-type PlayerImpl
-   = forall g a. RandomGen g =>
-                   PlayerPrompt a -> Rand g a
+type PlayerImpl m = forall a. PlayerPrompt a -> m a
 
-getRandomChoice :: RandomGen g => NonEmpty a -> Rand g a
+getRandomChoice :: MonadRandom m => NonEmpty a -> m a
 getRandomChoice xs = do
   i <- getRandomR (0, NE.length xs - 1)
   return $ xs NE.!! i
 
-run :: RandomGen g => (Player -> PlayerImpl) -> GameState -> Game a -> Rand g (a, GameState)
+run :: MonadRandom m => (Player -> PlayerImpl m) -> GameState -> Game a -> m (a, GameState)
 run players gs (Pure x) = return (x, gs)
 run players gs (Bind x f) = do
   (x', gs') <- run players gs x
@@ -412,8 +410,11 @@ run players gs (PlayerChoice p c) = do
   choice <- players p $ c
   return (choice, gs)
 
-dummyPlayer :: PlayerImpl
-dummyPlayer (PickMechanic ms) = getRandomChoice ms
+randomPlayer :: MonadRandom m => PlayerImpl m
+randomPlayer (PickMechanic ms) = getRandomChoice ms
+
+firstChoicePlayer :: Monad m => PlayerImpl m
+firstChoicePlayer (PickMechanic ms) = return $ NE.head ms
 
 getState :: (GameState -> a) -> Game a
 getState = changeState . gets
@@ -715,7 +716,7 @@ game = do
   whileM_ (not <$> isGameOver) doTurn
   allPlayers >>= mapM playerScore
 
-dummyRun st game = evalRandIO $ run (const dummyPlayer) st game
+dummyRun st game = evalRandIO $ run (const randomPlayer) st game
 
 universe :: (Bounded a, Enum a) => [a]
 universe = [minBound .. maxBound]
