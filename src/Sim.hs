@@ -304,6 +304,7 @@ data Mechanic
   | TopdeckFrom Player PlayerPile Card
   | TrashFrom Player PlayerPile Card
   -- etc
+  deriving (Show)
 
 data PlayerPrompt a where
   PickMechanic :: NonEmpty Mechanic -> PlayerPrompt Mechanic
