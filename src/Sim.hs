@@ -370,8 +370,9 @@ initState nPlayers = do
           , CursePile
           , ArtisanPile
           , BanditPile
-          , SmithyPile
           , CouncilRoomPile
+          , SentryPile
+          , SmithyPile
           ]
   return $
     GameState
