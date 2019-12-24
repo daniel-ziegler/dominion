@@ -412,12 +412,6 @@ run players gs (PlayerChoice p c) = do
   choice <- players p c gs
   return (choice, gs)
 
-randomPlayer :: MonadRandom m => PlayerImpl m
-randomPlayer (PickMechanic ms) gs = getRandomChoice ms
-
-firstChoicePlayer :: Monad m => PlayerImpl m
-firstChoicePlayer (PickMechanic ms) gs = return $ NE.head ms
-
 getState :: (GameState -> a) -> Game a
 getState = changeState . gets
 
@@ -717,8 +711,6 @@ game :: Game [Int]
 game = do
   whileM_ (not <$> isGameOver) doTurn
   allPlayers >>= mapM playerScore
-
-dummyRun st game = evalRandIO $ run (const randomPlayer) st game
 
 universe :: (Bounded a, Enum a) => [a]
 universe = [minBound .. maxBound]
