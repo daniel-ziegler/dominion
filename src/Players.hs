@@ -1,4 +1,5 @@
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Players where
 
@@ -6,8 +7,10 @@ import Control.Monad.Loops
 import Control.Monad.Random
 import Control.Monad.Trans
 import Control.Monad.Trans.Maybe
+import Data.List
 import Data.List.NonEmpty (NonEmpty(..), nonEmpty)
 import qualified Data.List.NonEmpty as NE
+import Data.Ord
 import Text.Read
 
 import Sim
@@ -36,3 +39,13 @@ promptPlayer (PickMechanic ms) gs =
             then return ix
             else mzero
       return $ ms NE.!! index
+
+mcsPlayer ::
+     forall m. MonadRandom m
+  => PlayerImpl m
+mcsPlayer (PickMechanic ms) gs = do
+  values <- traverse evalMove ms
+  return $ snd $ maximumBy (comparing fst) $ NE.zip values ms
+  where
+    evalMove :: Mechanic -> m Double
+    evalMove mv = getRandomR (-5.0, 5.0)

@@ -12,5 +12,5 @@ main = do
   print scores
   print st
   where
-    players (Player 0) = randomPlayer
+    players (Player 0) = mcsPlayer
     players (Player 1) = promptPlayer
