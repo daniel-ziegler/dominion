@@ -391,7 +391,8 @@ initState nPlayers = do
       let allEmpty = completeArray [(pz, []) | pz <- [minBound .. maxBound]]
       return $ allEmpty // [(Hand, hand), (Deck, deck)]
 
-type PlayerImpl m = forall a. PlayerPrompt a -> m a
+-- TODO: Observation instead of GameState
+type PlayerImpl m = forall a. PlayerPrompt a -> GameState -> m a
 
 getRandomChoice :: MonadRandom m => NonEmpty a -> m a
 getRandomChoice xs = do
@@ -408,14 +409,14 @@ run players gs (RandomChoice xs) = do
   x <- getRandomChoice xs
   return $ (x, gs)
 run players gs (PlayerChoice p c) = do
-  choice <- players p $ c
+  choice <- players p c gs
   return (choice, gs)
 
 randomPlayer :: MonadRandom m => PlayerImpl m
-randomPlayer (PickMechanic ms) = getRandomChoice ms
+randomPlayer (PickMechanic ms) gs = getRandomChoice ms
 
 firstChoicePlayer :: Monad m => PlayerImpl m
-firstChoicePlayer (PickMechanic ms) = return $ NE.head ms
+firstChoicePlayer (PickMechanic ms) gs = return $ NE.head ms
 
 getState :: (GameState -> a) -> Game a
 getState = changeState . gets

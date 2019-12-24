@@ -28,6 +28,7 @@ dependencies:
 - monad-loops >= 0.4 && <1
 - random-shuffle >= 0.0.4 && <1
 - flow >= 1.0 && <2
+- transformers >= 0.5 && <1
 
 library:
   source-dirs: src

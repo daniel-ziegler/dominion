@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: fe8eba1cccec3498726effc65cef0c0fefadbefd6e5259126bdfe10b53057d63
+-- hash: a1899c956284a627bfee1ae2c664ba6d5841cf9f442501b29f909f6918bf88c0
 
 name:           dominion
 version:        0.1.0.0
@@ -41,6 +41,7 @@ library
     , monad-loops >=0.4 && <1
     , mtl >=2.2.2 && <3
     , random-shuffle >=0.0.4 && <1
+    , transformers >=0.5 && <1
   default-language: Haskell2010
 
 executable dominion-exe
@@ -60,6 +61,7 @@ executable dominion-exe
     , monad-loops >=0.4 && <1
     , mtl >=2.2.2 && <3
     , random-shuffle >=0.0.4 && <1
+    , transformers >=0.5 && <1
   default-language: Haskell2010
 
 test-suite dominion-test
@@ -80,4 +82,5 @@ test-suite dominion-test
     , monad-loops >=0.4 && <1
     , mtl >=2.2.2 && <3
     , random-shuffle >=0.0.4 && <1
+    , transformers >=0.5 && <1
   default-language: Haskell2010
