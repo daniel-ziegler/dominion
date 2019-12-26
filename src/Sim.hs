@@ -392,13 +392,36 @@ initState nPlayers = do
       return $ allEmpty // [(Hand, hand), (Deck, deck)]
 
 -- TODO: Observation instead of GameState
-type PlayerImpl m = forall a. PlayerPrompt a -> GameState -> m a
+-- The last parameter is the "rest of the game" continuation
+type PlayerImpl m r = forall a. PlayerPrompt a -> GameState -> (a -> Game r) -> m a
 
 getRandomChoice :: MonadRandom m => NonEmpty a -> m a
 getRandomChoice xs = do
   i <- getRandomR (0, NE.length xs - 1)
   return $ xs NE.!! i
 
+stepGame ::
+     MonadRandom m => (Player -> PlayerImpl m r) -> GameState -> Game r -> m (Game r, GameState)
+stepGame players gs (Pure r) = return (Pure r, gs)
+stepGame players gs (Bind (Pure r) f) = return (f r, gs)
+stepGame players gs (Bind (Bind x g) f) = return (Bind x (\r -> Bind (g r) f), gs)
+stepGame players gs (Bind (ChangeState u) f) =
+  let (r, gs') = runState u gs
+   in return (f r, gs')
+stepGame players gs (Bind (RandomChoice xs) f) = do
+  r <- getRandomChoice xs
+  return (f r, gs)
+stepGame players gs (Bind (PlayerChoice p c) f) = do
+  choice <- players p c gs f
+  return (f choice, gs)
+
+runGame :: MonadRandom m => (Player -> PlayerImpl m r) -> GameState -> Game r -> m (r, GameState)
+runGame players gs (Pure x) = return (x, gs)
+runGame players gs g = do
+  (g', gs') <- stepGame players gs g
+  runGame players gs' g'
+
+{-
 run :: MonadRandom m => (Player -> PlayerImpl m) -> GameState -> Game a -> m (a, GameState)
 run players gs (Pure x) = return (x, gs)
 run players gs (Bind x f) = do
@@ -411,7 +434,7 @@ run players gs (RandomChoice xs) = do
 run players gs (PlayerChoice p c) = do
   choice <- players p c gs
   return (choice, gs)
-
+-}
 getState :: (GameState -> a) -> Game a
 getState = changeState . gets
 

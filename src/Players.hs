@@ -1,5 +1,6 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE RankNTypes #-}
 
 module Players where
 
@@ -15,14 +16,14 @@ import Text.Read
 
 import Sim
 
-firstChoicePlayer :: Monad m => PlayerImpl m
-firstChoicePlayer (PickMechanic ms) gs = return $ NE.head ms
+firstChoicePlayer :: Monad m => PlayerImpl m r
+firstChoicePlayer (PickMechanic ms) gs cont = return $ NE.head ms
 
-randomPlayer :: MonadRandom m => PlayerImpl m
-randomPlayer (PickMechanic ms) gs = getRandomChoice ms
+randomPlayer :: MonadRandom m => PlayerImpl m r
+randomPlayer (PickMechanic ms) gs cont = getRandomChoice ms
 
-promptPlayer :: PlayerImpl IO
-promptPlayer (PickMechanic ms) gs =
+promptPlayer :: PlayerImpl IO r
+promptPlayer (PickMechanic ms) gs cont =
   if NE.length ms == 1
     then return $ NE.head ms
     else do
@@ -42,10 +43,20 @@ promptPlayer (PickMechanic ms) gs =
 
 mcsPlayer ::
      forall m. MonadRandom m
-  => PlayerImpl m
-mcsPlayer (PickMechanic ms) gs = do
-  values <- traverse evalMove ms
+  => Int
+  -> PlayerImpl m [Int]
+mcsPlayer player (PickMechanic ms) gs cont = do
+  values <- traverse evalMove ms -- TODO: dedup moves
   return $ snd $ maximumBy (comparing fst) $ NE.zip values ms
+    -- TODO: multiple rollouts, parallelism
   where
     evalMove :: Mechanic -> m Double
-    evalMove mv = getRandomR (-5.0, 5.0)
+    evalMove mv = do
+      (scores, _) <- runGame (const randomPlayer) gs (cont mv)
+      let ourScore = scores !! player
+      let maxOther = maximum $ deleteAt player scores
+      return $ fromInteger $ toInteger $ ourScore - maxOther
+
+deleteAt idx xs = l ++ r
+  where
+    (l, (_:r)) = splitAt idx xs
