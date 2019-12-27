@@ -6,27 +6,22 @@ import Sim
 
 import Control.Monad.Random
 
-runExample :: IO ()
-runExample = do
-  st <- evalRandIO $ initState 2
-  (scores, st) <- runGame players st game
-  print scores
-  where
-    players (Player 0) = mcsPlayer 0
-    players (Player 1) = promptPlayer
+examplePlayers (Player 0) = mcsPlayer 0
+examplePlayers (Player 1) = promptPlayer
 
-{-
+runExampleSmallstep :: IO ()
+runExampleSmallstep = do
+  st <- evalRandIO $ initState 2
+  (scores, st) <- smallstepRunGame examplePlayers st game
+  print scores
+
 runExampleBigstep :: IO ()
 runExampleBigstep = do
   st <- evalRandIO $ initState 2
-  (scores, st) <- run players st game
+  (scores, st) <- bigstepRunGame examplePlayers st game Nil
   print scores
-  where
-    players (Player 0) = mcsPlayer
-    players (Player 1) = firstChoicePlayer
--}
-main = replicateM_ 100 runExample {-
-main =
+
+main = runExampleBigstep
+{-
   defaultMain
-    [bgroup "game" [bench "smallstep" $ nfIO runExample]] --, bench "bigstep" $ nfIO runExampleBigstep]]
--}
+    [bgroup "game" [bench "smallstep" $ nfIO runExample, bench "bigstep" $ nfIO runExampleBigstep]]-}

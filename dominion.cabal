@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 36809d8fefe1db1974494a81f1aa972245c8487df334d7115b2839fa564c7d0b
+-- hash: f74ef16b85f8cd276027cd01b7848c7d3a6bfcded1a81df0fdebb153cbe19900
 
 name:           dominion
 version:        0.1.0.0
@@ -57,6 +57,7 @@ executable dominion-exe
     , array >=0.5 && <1
     , base >=4.7 && <5
     , containers >=0.6 && <1
+    , criterion >=1.5.6 && <2
     , dominion
     , flow >=1.0 && <2
     , monad-loops >=0.4 && <1

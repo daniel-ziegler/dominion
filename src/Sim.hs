@@ -251,7 +251,7 @@ pileCard = inverseMap originPile .> fromJust
 
 victoryCardCount :: Int -> Int
 victoryCardCount nPlayers
-  | nPlayers <= 2 = 8
+  | nPlayers <= 2 = 3 --8
   | otherwise = 12
 
 initCount :: SupplyPile -> Int -> Int
@@ -261,7 +261,7 @@ initCount ProvincePile = victoryCardCount
 initCount CopperPile = \nPlayers -> 60 - 7 * nPlayers
 initCount SilverPile = const 40
 initCount GoldPile = const 30
-initCount _ = const 10
+initCount _ = const 4 --10
 
 initPile :: Int -> SupplyPile -> [Card]
 initPile nPlayers pile = replicate (initCount pile nPlayers) (pileCard pile)
@@ -400,6 +400,16 @@ getRandomChoice xs = do
   i <- getRandomR (0, NE.length xs - 1)
   return $ xs NE.!! i
 
+data ContStack a r where
+  Nil :: ContStack a a
+  Cons :: forall a b r. (a -> Game b) -> ContStack b r -> ContStack a r
+
+runCont :: ContStack a r -> a -> Game r
+runCont Nil x = return x
+runCont (Cons f fs) x = do
+  v <- f x
+  runCont fs v
+
 stepGame ::
      MonadRandom m => (Player -> PlayerImpl m r) -> GameState -> Game r -> m (Game r, GameState)
 stepGame players gs (Pure r) = return (Pure r, gs)
@@ -415,26 +425,32 @@ stepGame players gs (Bind (PlayerChoice p c) f) = do
   choice <- players p c gs f
   return (f choice, gs)
 
-runGame :: MonadRandom m => (Player -> PlayerImpl m r) -> GameState -> Game r -> m (r, GameState)
-runGame players gs (Pure x) = return (x, gs)
-runGame players gs g = do
+smallstepRunGame ::
+     MonadRandom m => (Player -> PlayerImpl m r) -> GameState -> Game r -> m (r, GameState)
+smallstepRunGame players gs (Pure x) = return (x, gs)
+smallstepRunGame players gs g = do
   (g', gs') <- stepGame players gs g
-  runGame players gs' g'
+  smallstepRunGame players gs' g'
 
-{-
-run :: MonadRandom m => (Player -> PlayerImpl m) -> GameState -> Game a -> m (a, GameState)
-run players gs (Pure x) = return (x, gs)
-run players gs (Bind x f) = do
-  (x', gs') <- run players gs x
-  run players gs' (f x')
-run players gs (ChangeState u) = return $ runState u gs
-run players gs (RandomChoice xs) = do
+bigstepRunGame ::
+     MonadRandom m
+  => (Player -> PlayerImpl m r)
+  -> GameState
+  -> Game a
+  -> ContStack a r
+  -> m (a, GameState)
+bigstepRunGame players gs (Pure x) cont = return (x, gs)
+bigstepRunGame players gs (Bind x f) cont = do
+  (x', gs') <- bigstepRunGame players gs x (Cons f cont)
+  bigstepRunGame players gs' (f x') cont
+bigstepRunGame players gs (ChangeState u) cont = return $ runState u gs
+bigstepRunGame players gs (RandomChoice xs) cont = do
   x <- getRandomChoice xs
   return $ (x, gs)
-run players gs (PlayerChoice p c) = do
-  choice <- players p c gs
+bigstepRunGame players gs (PlayerChoice p c) cont = do
+  choice <- players p c gs (runCont cont)
   return (choice, gs)
--}
+
 getState :: (GameState -> a) -> Game a
 getState = changeState . gets
 
