@@ -4,7 +4,22 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module Game where
+module Game
+  ( Player(Player)
+  , Game()
+  , PlayerImpl
+  , changeState
+  , randomChoice
+  , playerChoice
+  , note
+  , bigstepRunGame
+  , smallstepRunGame
+  , getState
+  , getRandomChoice
+  , modifyState
+  , inverseMap
+  , completeArray
+  ) where
 
 import Flow
 
@@ -52,6 +67,9 @@ randomChoice = RandomChoice
 
 playerChoice :: Player -> NonEmpty mv -> Game gs mv mv
 playerChoice = PlayerChoice
+
+note :: String -> Game gs mv a -> Game gs mv a
+note = Note
 
 -- TODO: Observation instead of game state
 -- The last parameter is the "rest of the game" continuation

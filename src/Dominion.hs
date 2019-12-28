@@ -396,7 +396,7 @@ gameShuffle xs = do
     rseq :: Int -> DGame [Int]
     rseq 0 = return []
     rseq i =
-      Note ("rseq " ++ show i) $ do
+      note ("rseq " ++ show i) $ do
         first <- randomChoice (0 :| [1 .. i])
         rest <- rseq (i - 1)
         return (first : rest)
