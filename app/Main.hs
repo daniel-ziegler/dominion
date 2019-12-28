@@ -2,8 +2,9 @@ module Main where
 
 import Data.List.NonEmpty (NonEmpty(..))
 
+import Dominion
+import Game
 import Players
-import Sim
 
 import Control.Monad.Random
 import Debug.Trace

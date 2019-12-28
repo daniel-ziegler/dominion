@@ -4,7 +4,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module Sim where
+module Dominion where
 
 import Flow
 
@@ -20,6 +20,8 @@ import qualified Data.Map as Map
 import Data.Maybe
 import qualified Data.Set as Set
 import System.Random.Shuffle
+
+import Game
 
 data CardType
   = Action
@@ -268,10 +270,6 @@ initCount _ = const 10
 initPile :: Int -> SupplyPile -> [Card]
 initPile nPlayers pile = replicate (initCount pile nPlayers) (pileCard pile)
 
-newtype Player =
-  Player Int
-  deriving (Eq, Ord, Show, Ix)
-
 playerIndex :: Player -> Int
 playerIndex (Player i) = i
 
@@ -309,8 +307,8 @@ data Mechanic
   -- etc
   deriving (Show)
 
-data GameState =
-  GameState
+data DGameState =
+  DGameState
     { playerPiles :: Array Player (Array PlayerPile [Card])
     , supply :: Map.Map SupplyPile [Card]
     , trash :: [Card]
@@ -319,38 +317,12 @@ data GameState =
     }
   deriving (Show)
 
-gameNPlayers :: GameState -> Int
-gameNPlayers (GameState {playerPiles}) = 1 + (playerIndex $ snd $ bounds playerPiles)
+type DGame a = Game DGameState Mechanic a
 
-type StateUpdate = State GameState
+type DPlayerImpl m r = PlayerImpl DGameState Mechanic m r
 
-data Game a where
-  Note :: String -> Game a -> Game a
-  Pure :: a -> Game a
-  Bind :: Game a -> (a -> Game b) -> Game b
-  ChangeState :: StateUpdate a -> Game a
-  RandomChoice :: NonEmpty a -> Game a
-  PlayerChoice :: Player -> NonEmpty Mechanic -> Game Mechanic
-
-instance Functor Game where
-  fmap f g = Bind g (Pure . f)
-
-instance Applicative Game where
-  pure = Pure
-  gf <*> ga = Bind ga (\a -> Bind gf (\f -> return $ f a))
-
-instance Monad Game where
-  x >>= f = Bind x f
-
-{- Use these in case we want to switch to a GameMonad typeclass -}
-changeState :: StateUpdate a -> Game a
-changeState = ChangeState
-
-randomChoice :: NonEmpty a -> Game a
-randomChoice = RandomChoice
-
-playerChoice :: Player -> NonEmpty Mechanic -> Game Mechanic
-playerChoice = PlayerChoice
+gameNPlayers :: DGameState -> Int
+gameNPlayers (DGameState {playerPiles}) = 1 + (playerIndex $ snd $ bounds playerPiles)
 
 initCounters :: Array Counter Int
 initCounters = completeArray [(Actions, 1), (Coins, 0), (Buys, 1)]
@@ -358,7 +330,7 @@ initCounters = completeArray [(Actions, 1), (Coins, 0), (Buys, 1)]
 initState ::
      forall m. MonadRandom m
   => Int
-  -> m GameState
+  -> m DGameState
 initState nPlayers = do
   allPlayerPiles <- replicateM nPlayers playerPiles
   let playerPs =
@@ -381,7 +353,7 @@ initState nPlayers = do
           , SmithyPile
           ]
   return $
-    GameState
+    DGameState
       { playerPiles = playerPs
       , supply = supplyPiles
       , trash = []
@@ -396,98 +368,17 @@ initState nPlayers = do
       let allEmpty = completeArray [(pz, []) | pz <- [minBound .. maxBound]]
       return $ allEmpty // [(Hand, hand), (Deck, deck)]
 
--- TODO: Observation instead of GameState
--- The last parameter is the "rest of the game" continuation
-type PlayerImpl m r = NonEmpty Mechanic -> GameState -> (Mechanic -> Game r) -> m Mechanic
-
-getRandomChoice :: MonadRandom m => NonEmpty a -> m a
-getRandomChoice xs = do
-  i <- getRandomR (0, NE.length xs - 1)
-  return $ xs NE.!! i
-
-data ContStack a r where
-  Nil :: ContStack a a
-  Cons :: forall a b r. (a -> Game b) -> ContStack b r -> ContStack a r
-
-runCont :: ContStack a r -> a -> Game r
-runCont Nil x = return x
-runCont (Cons f fs) x = do
-  v <- f x
-  runCont fs v
-
-stepGame ::
-     MonadRandom m => (Player -> PlayerImpl m r) -> GameState -> Game r -> m (Game r, GameState)
-stepGame _ gs (Pure r) = return (Pure r, gs)
-stepGame _ gs (Bind (Pure r) f) = return (f r, gs)
-stepGame _ gs (Bind (Bind x g) f) = return (Bind x (\r -> Bind (g r) f), gs)
-stepGame _ gs (Bind (ChangeState u) f) =
-  let (r, gs') = runState u gs
-   in return (f r, gs')
-stepGame _ gs (Bind (RandomChoice xs) f) = do
-  r <- getRandomChoice xs
-  return (f r, gs)
-stepGame players gs (Bind (PlayerChoice p c) f) = do
-  choice <- players p c gs f
-  return (f choice, gs)
-stepGame players gs (Bind (Note _ m) f) = stepGame players gs (Bind m f)
-stepGame _ _ _ = undefined
-
-instance Show (Game a) where
-  show (Note s m) = s ++ ": " ++ show m
-  show (Pure _) = "return ?"
-  show (Bind m _) = "(" ++ show m ++ " >>= ?)"
-  show (PlayerChoice p _) = "player " ++ show p ++ "?"
-  show (RandomChoice _) = "random ?"
-  show (ChangeState _) = "changestate ?"
-
-smallstepRunGame ::
-     MonadRandom m => (Player -> PlayerImpl m r) -> GameState -> Game r -> m (r, GameState)
-smallstepRunGame _ gs (Pure x) = return (x, gs)
-smallstepRunGame players gs g = do
-  (g', gs') <- stepGame players gs g
-  smallstepRunGame players gs' g'
-
-bigstepRun ::
-     MonadRandom m
-  => (Player -> PlayerImpl m r)
-  -> GameState
-  -> Game a
-  -> ContStack a r
-  -> m (a, GameState)
-bigstepRun _ gs (Pure x) _ = return (x, gs)
-bigstepRun players gs (Bind x f) cont = do
-  (x', gs') <- bigstepRun players gs x (Cons f cont)
-  bigstepRun players gs' (f x') cont
-bigstepRun _ gs (ChangeState u) _ = return $ runState u gs
-bigstepRun _ gs (RandomChoice xs) _ = do
-  x <- getRandomChoice xs
-  return $ (x, gs)
-bigstepRun players gs (PlayerChoice p c) cont = do
-  choice <- players p c gs (runCont cont)
-  return (choice, gs)
-bigstepRun players gs (Note _ m) cont = bigstepRun players gs m cont
-
-bigstepRunGame ::
-     MonadRandom m => (Player -> PlayerImpl m a) -> GameState -> Game a -> m (a, GameState)
-bigstepRunGame players gs m = bigstepRun players gs m Nil
-
-getState :: (GameState -> a) -> Game a
-getState = changeState . gets
-
-modifyState :: (GameState -> GameState) -> Game ()
-modifyState = changeState . modify
-
-computeCardPrice :: Card -> Game Int
+computeCardPrice :: Card -> DGame Int
 computeCardPrice = return . cardBasePrice
 
-computeCardScore :: Card -> Game Int
+computeCardScore :: Card -> DGame Int
 computeCardScore Curse = return (-1)
 computeCardScore Estate = return 1
 computeCardScore Duchy = return 3
 computeCardScore Province = return 5
 computeCardScore _ = return 0
 
-adjustCounter :: Counter -> Int -> Game ()
+adjustCounter :: Counter -> Int -> DGame ()
 adjustCounter ctr delta =
   modifyState
     (\gs ->
@@ -496,13 +387,13 @@ adjustCounter ctr delta =
              then error $ "underflowed " ++ show ctr
              else gs {counters = counters gs // [(ctr, newval)]})
 
-gameShuffle :: [a] -> Game [a]
+gameShuffle :: [a] -> DGame [a]
 gameShuffle [] = return []
 gameShuffle xs = do
   rs <- rseq (length xs - 1)
   return $ shuffle xs rs
   where
-    rseq :: Int -> Game [Int]
+    rseq :: Int -> DGame [Int]
     rseq 0 = return []
     rseq i =
       Note ("rseq " ++ show i) $ do
@@ -510,14 +401,14 @@ gameShuffle xs = do
         rest <- rseq (i - 1)
         return (first : rest)
 
-getPile :: Pile -> Game [Card]
+getPile :: Pile -> DGame [Card]
 getPile pile = getState $ getPile' pile
   where
     getPile' (PlayerPile player playerPile) gs = playerPiles gs ! player ! playerPile
     getPile' (Supply supplyPile) gs = supply gs Map.! supplyPile
     getPile' Trash gs = trash gs
 
-setPile :: Pile -> [Card] -> Game ()
+setPile :: Pile -> [Card] -> DGame ()
 setPile pile cards = modifyState $ setPile' pile
   where
     setPile' (PlayerPile player playerPile) gs =
@@ -527,12 +418,12 @@ setPile pile cards = modifyState $ setPile' pile
     setPile' (Supply supplyPile) gs = gs {supply = Map.insert supplyPile cards $ supply gs}
     setPile' Trash gs = gs {trash = cards}
 
-modifyPile :: Pile -> ([Card] -> [Card]) -> Game ()
+modifyPile :: Pile -> ([Card] -> [Card]) -> DGame ()
 modifyPile pile f = do
   cards <- getPile pile
   setPile pile (f cards)
 
-movePile :: Pile -> Pile -> Game ()
+movePile :: Pile -> Pile -> DGame ()
 movePile from to = do
   cards <- getPile from
   setPile from []
@@ -540,19 +431,19 @@ movePile from to = do
 
 -- WARNING: won't trigger reshuffle when you take off a player's deck.
 -- Use moveFromDeckTop instead for that.
-moveTopCards :: Int -> Pile -> Pile -> Game Int
+moveTopCards :: Int -> Pile -> Pile -> DGame Int
 moveTopCards n from to = do
   cards <- take n <$> getPile from
   modifyPile from (drop n)
   modifyPile to (cards ++)
   return $ length cards
 
-moveTopCard :: Pile -> Pile -> Game Bool
+moveTopCard :: Pile -> Pile -> DGame Bool
 moveTopCard from to = do
   n <- moveTopCards 1 from to
   return $ n > 0
 
-moveFromDeckTop :: Int -> Player -> Pile -> Game Int
+moveFromDeckTop :: Int -> Player -> Pile -> DGame Int
 moveFromDeckTop n fromPlayer to = do
   taken <- moveTopCards n (PlayerPile fromPlayer Deck) to
   if taken == n
@@ -562,7 +453,7 @@ moveFromDeckTop n fromPlayer to = do
       moreTaken <- moveTopCards (n - taken) (PlayerPile fromPlayer Deck) to
       return $ taken + moreTaken
 
-moveCard :: Card -> Pile -> Pile -> Game Bool
+moveCard :: Card -> Pile -> Pile -> DGame Bool
 moveCard card from to = do
   cards <- getPile from
   if card `elem` cards
@@ -572,13 +463,13 @@ moveCard card from to = do
       return True
     else return False
 
-shufflePile :: Pile -> Game ()
+shufflePile :: Pile -> DGame ()
 shufflePile pile = do
   cards <- getPile pile
   shuffled <- gameShuffle cards
   setPile pile shuffled
 
-actionPhase :: Game ()
+actionPhase :: DGame ()
 actionPhase = do
   you <- getState turn
   nActions <- getState ((! Actions) . counters)
@@ -590,7 +481,7 @@ actionPhase = do
       didSomething <- doMechanic choice
       when didSomething actionPhase
 
-playTreasuresPhase :: Game ()
+playTreasuresPhase :: DGame ()
 playTreasuresPhase = do
   you <- getState turn
   hand <- getPile (PlayerPile you Hand)
@@ -603,18 +494,18 @@ playTreasuresPhase = do
       playTreasuresPhase
     _ -> error "how'd you pick that?"
 
-pilePrice :: SupplyPile -> Game (Maybe Int)
+pilePrice :: SupplyPile -> DGame (Maybe Int)
 pilePrice pile = do
   cards <- getState (\gs -> supply gs Map.! pile)
   case cards of
     [] -> return Nothing
     (c:_) -> Just <$> computeCardPrice c
 
-priceFilteredSupplyPiles :: (Int -> Bool) -> Game [SupplyPile]
+priceFilteredSupplyPiles :: (Int -> Bool) -> DGame [SupplyPile]
 priceFilteredSupplyPiles goodPrice = do
   getState (supply .> Map.keys) >>= filterM (\p -> any goodPrice <$> pilePrice p)
 
-buyPhase :: Game ()
+buyPhase :: DGame ()
 buyPhase = do
   you <- getState turn
   nBuys <- getState ((! Buys) . counters)
@@ -627,7 +518,7 @@ buyPhase = do
       boughtSomething <- doMechanic choice
       when boughtSomething buyPhase
 
-cleanupPhase :: Game ()
+cleanupPhase :: DGame ()
 cleanupPhase = do
   you <- getState turn
   movePile (PlayerPile you InPlay) (PlayerPile you Discard)
@@ -637,11 +528,11 @@ cleanupPhase = do
 nextPlayer :: Int -> Player -> Player
 nextPlayer nPlayers (Player n) = Player ((n + 1) `mod` nPlayers)
 
-advanceTurn :: Game ()
+advanceTurn :: DGame ()
 advanceTurn = do
   modifyState (\gs -> gs {counters = initCounters, turn = nextPlayer (gameNPlayers gs) (turn gs)})
 
-doTurn :: Game ()
+doTurn :: DGame ()
 doTurn = do
   actionPhase
   playTreasuresPhase
@@ -649,12 +540,12 @@ doTurn = do
   cleanupPhase
   advanceTurn
 
-reshuffle :: Player -> Game ()
+reshuffle :: Player -> DGame ()
 reshuffle player = do
   shufflePile (PlayerPile player Discard)
   movePile (PlayerPile player Discard) (PlayerPile player Deck)
 
-doMechanic :: Mechanic -> Game Bool
+doMechanic :: Mechanic -> DGame Bool
 doMechanic Nop = return False
 doMechanic (Buy player supplyPile) = do
   price <- fromJust <$> pilePrice supplyPile
@@ -680,18 +571,18 @@ doMechanic (TopdeckFrom player from card) = do
 doMechanic (TrashFrom player from card) = do
   moveCard card (PlayerPile player from) Trash
 
-allPlayers :: Game [Player]
+allPlayers :: DGame [Player]
 allPlayers = do
   n <- getState gameNPlayers
   return $ map Player [0 .. n - 1]
 
-allOtherPlayersDo :: (Player -> Game ()) -> Game ()
+allOtherPlayersDo :: (Player -> DGame ()) -> DGame ()
 allOtherPlayersDo f = do
   you <- getState turn
   players <- allPlayers
   filter (/= you) players |> mapM_ f
 
-pickMechanicUntilQuit :: Player -> Game [Mechanic] -> Game ()
+pickMechanicUntilQuit :: Player -> DGame [Mechanic] -> DGame ()
 pickMechanicUntilQuit player getChoices = do
   choices <- getChoices
   choice <- playerChoice player (Nop :| choices)
@@ -699,7 +590,7 @@ pickMechanicUntilQuit player getChoices = do
     Nop -> return ()
     _ -> doMechanic choice >> pickMechanicUntilQuit player getChoices
 
-pickMechanicUntilEmpty :: Player -> Game [Mechanic] -> Game ()
+pickMechanicUntilEmpty :: Player -> DGame [Mechanic] -> DGame ()
 pickMechanicUntilEmpty player getChoices = do
   maybeChoices <- nonEmpty <$> getChoices
   case maybeChoices of
@@ -708,7 +599,7 @@ pickMechanicUntilEmpty player getChoices = do
       choice <- playerChoice player choices
       doMechanic choice >> pickMechanicUntilEmpty player getChoices
 
-pickMechanicUnlessEmpty :: Player -> [Mechanic] -> Game Bool
+pickMechanicUnlessEmpty :: Player -> [Mechanic] -> DGame Bool
 pickMechanicUnlessEmpty player maybeChoices = do
   case nonEmpty maybeChoices of
     Nothing -> return False
@@ -716,7 +607,7 @@ pickMechanicUnlessEmpty player maybeChoices = do
       choice <- playerChoice player choices
       doMechanic choice
 
-playEffect :: Card -> Game ()
+playEffect :: Card -> DGame ()
 playEffect card = do
   you <- getState turn
   case card of
@@ -761,41 +652,20 @@ playEffect card = do
     Smithy -> replicateM_ 3 $ doMechanic (Draw you)
     c -> error $ "haven't implemented " ++ show c
 
-isGameOver :: Game Bool
-isGameOver = do
+isDGameOver :: DGame Bool
+isDGameOver = do
   supplyPiles <- getState supply
   let emptyPiles = Map.filter null supplyPiles
   return $ Map.member ProvincePile emptyPiles || Map.size emptyPiles >= 3
 
-playerScore :: Player -> Game Int
+playerScore :: Player -> DGame Int
 playerScore p = do
   piles <- getState (\gs -> playerPiles gs ! p)
   let allCards = concat $ elems piles
   cardScores <- mapM computeCardScore allCards
   return $ sum cardScores
 
-game :: Game [Int]
+game :: DGame [Int]
 game = do
-  whileM_ (not <$> isGameOver) doTurn
+  whileM_ (not <$> isDGameOver) doTurn
   allPlayers >>= mapM playerScore
-
-universe :: (Bounded a, Enum a) => [a]
-universe = [minBound .. maxBound]
-
-counts :: (Ord a) => [a] -> Map.Map a Int
-counts = (`zip` (repeat 1)) .> Map.fromListWith (+)
-
-{- stolen from Relude -}
-inverseMap ::
-     forall a k. (Bounded a, Enum a, Ord k)
-  => (a -> k)
-  -> (k -> Maybe a)
-inverseMap f = \k -> Map.lookup k dict
-  where
-    dict :: Map.Map k a
-    dict = Map.fromList $ zip (map f univ) univ
-    univ :: [a]
-    univ = universe
-
-completeArray :: (Ix i, Bounded i) => [(i, e)] -> Array i e
-completeArray = array (minBound, maxBound)

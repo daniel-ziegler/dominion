@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: e1427ea3fca679d3f2c5a2f12e9496f679c93f58556aa430d46ebf1c2d91553e
+-- hash: d93a02bbec33a8aabd49745bc07186ce87cd77cae1633ef2348cf5fd711c3613
 
 name:           dominion
 version:        0.1.0.0
@@ -27,8 +27,9 @@ source-repository head
 
 library
   exposed-modules:
+      Dominion
+      Game
       Players
-      Sim
   other-modules:
       Paths_dominion
   hs-source-dirs:

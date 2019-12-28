@@ -14,15 +14,16 @@ import qualified Data.List.NonEmpty as NE
 import Data.Ord
 import Text.Read
 
-import Sim
+import Dominion
+import Game
 
-firstChoicePlayer :: Monad m => PlayerImpl m r
+firstChoicePlayer :: Monad m => DPlayerImpl m r
 firstChoicePlayer mvs gs cont = return $ NE.head mvs
 
-randomPlayer :: MonadRandom m => PlayerImpl m r
+randomPlayer :: MonadRandom m => DPlayerImpl m r
 randomPlayer mvs gs cont = getRandomChoice mvs
 
-promptPlayer :: PlayerImpl IO r
+promptPlayer :: DPlayerImpl IO r
 promptPlayer mvs gs cont =
   if NE.length mvs == 1
     then return $ NE.head mvs
@@ -44,7 +45,7 @@ promptPlayer mvs gs cont =
 mcsPlayer ::
      forall m. MonadRandom m
   => Int
-  -> PlayerImpl m [Int]
+  -> DPlayerImpl m [Int]
 mcsPlayer player mvs gs cont = do
   values <- traverse evalMove mvs -- TODO: dedup moves
   return $ snd $ maximumBy (comparing fst) $ NE.zip values mvs
