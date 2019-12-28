@@ -52,7 +52,7 @@ mcsPlayer player (PickMechanic ms) gs cont = do
   where
     evalMove :: Mechanic -> m Double
     evalMove mv = do
-      (scores, _) <- bigstepRunGame (const randomPlayer) gs (cont mv) Nil
+      (scores, _) <- smallstepRunGame (const randomPlayer) gs (cont mv)
       let ourScore = scores !! player
       let maxOther = maximum $ deleteAt player scores
       return $ fromInteger $ toInteger $ ourScore - maxOther

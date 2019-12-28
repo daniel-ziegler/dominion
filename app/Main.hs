@@ -1,10 +1,14 @@
 module Main where
 
+import Data.List.NonEmpty (NonEmpty(..))
+
 --import Criterion.Main
 import Players
 import Sim
 
 import Control.Monad.Random
+import Debug.Trace
+import System.Random
 
 examplePlayers (Player 0) = mcsPlayer 0
 examplePlayers (Player 1) = promptPlayer
@@ -21,7 +25,9 @@ runExampleBigstep = do
   (scores, st) <- bigstepRunGame examplePlayers st game Nil
   print scores
 
-main = runExampleBigstep
+main = do
+  setStdGen $ mkStdGen 0
+  runExampleBigstep
 {-
   defaultMain
     [bgroup "game" [bench "smallstep" $ nfIO runExample, bench "bigstep" $ nfIO runExampleBigstep]]-}
