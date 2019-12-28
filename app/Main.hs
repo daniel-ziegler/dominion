@@ -11,7 +11,7 @@ import Debug.Trace
 import System.Random
 
 examplePlayers (Player 0) = mcsPlayer 0
-examplePlayers (Player 1) = promptPlayer
+examplePlayers (Player 1) = randomPlayer
 
 runExampleSmallstep :: IO ()
 runExampleSmallstep = do
