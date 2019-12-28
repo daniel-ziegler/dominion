@@ -21,20 +21,12 @@ module Game
   , completeArray
   ) where
 
-import Flow
-
-import Control.Monad
-import Control.Monad.Loops
 import Control.Monad.Random hiding (fromList)
 import Control.Monad.State.Lazy
 import Data.Array.IArray
-import Data.List
-import Data.List.NonEmpty (NonEmpty(..), nonEmpty)
+import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map as Map
-import Data.Maybe
-import qualified Data.Set as Set
-import System.Random.Shuffle
 
 newtype Player =
   Player Int
@@ -154,9 +146,6 @@ modifyState = changeState . modify
 
 universe :: (Bounded a, Enum a) => [a]
 universe = [minBound .. maxBound]
-
-counts :: (Ord a) => [a] -> Map.Map a Int
-counts = (`zip` (repeat 1)) .> Map.fromListWith (+)
 
 {- stolen from Relude -}
 inverseMap ::

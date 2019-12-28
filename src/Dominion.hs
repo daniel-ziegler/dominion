@@ -11,7 +11,6 @@ import Flow
 import Control.Monad
 import Control.Monad.Loops
 import Control.Monad.Random hiding (fromList)
-import Control.Monad.State.Lazy
 import Data.Array.IArray
 import Data.List
 import Data.List.NonEmpty (NonEmpty(..), nonEmpty)
