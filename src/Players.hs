@@ -17,37 +17,37 @@ import Text.Read
 import Sim
 
 firstChoicePlayer :: Monad m => PlayerImpl m r
-firstChoicePlayer (PickMechanic ms) gs cont = return $ NE.head ms
+firstChoicePlayer mvs gs cont = return $ NE.head mvs
 
 randomPlayer :: MonadRandom m => PlayerImpl m r
-randomPlayer (PickMechanic ms) gs cont = getRandomChoice ms
+randomPlayer mvs gs cont = getRandomChoice mvs
 
 promptPlayer :: PlayerImpl IO r
-promptPlayer (PickMechanic ms) gs cont =
-  if NE.length ms == 1
-    then return $ NE.head ms
+promptPlayer mvs gs cont =
+  if NE.length mvs == 1
+    then return $ NE.head mvs
     else do
       print gs
       putStr "Moves: "
-      print $ zip [0 ..] $ NE.toList ms
+      print $ zip [0 ..] $ NE.toList mvs
       index <-
         untilJust $
         runMaybeT $ do
           liftIO $ putStr "Which? "
           choiceStr <- liftIO $ getLine
           ix <- MaybeT $ return $ readMaybe choiceStr
-          if ix < NE.length ms
+          if ix < NE.length mvs
             then return ix
             else mzero
-      return $ ms NE.!! index
+      return $ mvs NE.!! index
 
 mcsPlayer ::
      forall m. MonadRandom m
   => Int
   -> PlayerImpl m [Int]
-mcsPlayer player (PickMechanic ms) gs cont = do
-  values <- traverse evalMove ms -- TODO: dedup moves
-  return $ snd $ maximumBy (comparing fst) $ NE.zip values ms
+mcsPlayer player mvs gs cont = do
+  values <- traverse evalMove mvs -- TODO: dedup moves
+  return $ snd $ maximumBy (comparing fst) $ NE.zip values mvs
     -- TODO: multiple rollouts, parallelism
   where
     evalMove :: Mechanic -> m Double

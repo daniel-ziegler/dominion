@@ -309,9 +309,6 @@ data Mechanic
   -- etc
   deriving (Show)
 
-data PlayerPrompt a where
-  PickMechanic :: NonEmpty Mechanic -> PlayerPrompt Mechanic
-
 data GameState =
   GameState
     { playerPiles :: Array Player (Array PlayerPile [Card])
@@ -333,7 +330,7 @@ data Game a where
   Bind :: Game a -> (a -> Game b) -> Game b
   ChangeState :: StateUpdate a -> Game a
   RandomChoice :: NonEmpty a -> Game a
-  PlayerChoice :: Player -> PlayerPrompt a -> Game a
+  PlayerChoice :: Player -> NonEmpty Mechanic -> Game Mechanic
 
 instance Functor Game where
   fmap f g = Bind g (Pure . f)
@@ -352,7 +349,7 @@ changeState = ChangeState
 randomChoice :: NonEmpty a -> Game a
 randomChoice = RandomChoice
 
-playerChoice :: Player -> PlayerPrompt a -> Game a
+playerChoice :: Player -> NonEmpty Mechanic -> Game Mechanic
 playerChoice = PlayerChoice
 
 initCounters :: Array Counter Int
@@ -401,7 +398,7 @@ initState nPlayers = do
 
 -- TODO: Observation instead of GameState
 -- The last parameter is the "rest of the game" continuation
-type PlayerImpl m r = forall a. PlayerPrompt a -> GameState -> (a -> Game r) -> m a
+type PlayerImpl m r = NonEmpty Mechanic -> GameState -> (Mechanic -> Game r) -> m Mechanic
 
 getRandomChoice :: MonadRandom m => NonEmpty a -> m a
 getRandomChoice xs = do
@@ -589,8 +586,7 @@ actionPhase = do
     then return ()
     else do
       hand <- getPile (PlayerPile you Hand)
-      choice <-
-        playerChoice you (PickMechanic $ Nop :| (map (Play you) $ filter (cardHasType Action) hand))
+      choice <- playerChoice you (Nop :| (map (Play you) $ filter (cardHasType Action) hand))
       didSomething <- doMechanic choice
       when didSomething actionPhase
 
@@ -598,8 +594,7 @@ playTreasuresPhase :: Game ()
 playTreasuresPhase = do
   you <- getState turn
   hand <- getPile (PlayerPile you Hand)
-  choice <-
-    playerChoice you (PickMechanic $ Nop :| (map (Play you) $ filter (cardHasType Treasure) hand))
+  choice <- playerChoice you (Nop :| (map (Play you) $ filter (cardHasType Treasure) hand))
   case choice of
     Nop -> return ()
     Play _ card -> do
@@ -628,7 +623,7 @@ buyPhase = do
     else do
       coins <- getState (\gs -> counters gs ! Coins)
       affordablePiles <- priceFilteredSupplyPiles (<= coins)
-      choice <- playerChoice you (PickMechanic $ Nop :| map (Buy you) affordablePiles)
+      choice <- playerChoice you (Nop :| map (Buy you) affordablePiles)
       boughtSomething <- doMechanic choice
       when boughtSomething buyPhase
 
@@ -699,7 +694,7 @@ allOtherPlayersDo f = do
 pickMechanicUntilQuit :: Player -> Game [Mechanic] -> Game ()
 pickMechanicUntilQuit player getChoices = do
   choices <- getChoices
-  choice <- playerChoice player (PickMechanic $ Nop :| choices)
+  choice <- playerChoice player (Nop :| choices)
   case choice of
     Nop -> return ()
     _ -> doMechanic choice >> pickMechanicUntilQuit player getChoices
@@ -710,7 +705,7 @@ pickMechanicUntilEmpty player getChoices = do
   case maybeChoices of
     Nothing -> return ()
     Just choices -> do
-      choice <- playerChoice player (PickMechanic choices)
+      choice <- playerChoice player choices
       doMechanic choice >> pickMechanicUntilEmpty player getChoices
 
 pickMechanicUnlessEmpty :: Player -> [Mechanic] -> Game Bool
@@ -718,7 +713,7 @@ pickMechanicUnlessEmpty player maybeChoices = do
   case nonEmpty maybeChoices of
     Nothing -> return False
     Just choices -> do
-      choice <- playerChoice player (PickMechanic choices)
+      choice <- playerChoice player choices
       doMechanic choice
 
 playEffect :: Card -> Game ()
@@ -733,15 +728,13 @@ playEffect card = do
       case gainOptions of
         Nothing -> return ()
         Just gainOptions -> do
-          choice <-
-            playerChoice you (PickMechanic $ NE.map (\p -> Gain you (Supply p) Hand) gainOptions)
+          choice <- playerChoice you (NE.map (\p -> Gain you (Supply p) Hand) gainOptions)
           void $ doMechanic choice
       topdeckOptions <- nonEmpty <$> getPile (PlayerPile you Hand)
       case topdeckOptions of
         Nothing -> return ()
         Just topdeckOptions -> do
-          choice <-
-            playerChoice you (PickMechanic $ NE.map (\c -> TopdeckFrom you Hand c) topdeckOptions)
+          choice <- playerChoice you (NE.map (\c -> TopdeckFrom you Hand c) topdeckOptions)
           void $ doMechanic choice
     Bandit -> do
       void $ doMechanic (Gain you (Supply GoldPile) Discard)
