@@ -2,7 +2,6 @@ module Main where
 
 import Data.List.NonEmpty (NonEmpty(..))
 
---import Criterion.Main
 import Players
 import Sim
 
@@ -28,6 +27,3 @@ runExampleBigstep = do
 main = do
   setStdGen $ mkStdGen 0
   runExampleBigstep
-{-
-  defaultMain
-    [bgroup "game" [bench "smallstep" $ nfIO runExample, bench "bigstep" $ nfIO runExampleBigstep]]-}
