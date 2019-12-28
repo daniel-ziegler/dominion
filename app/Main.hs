@@ -22,7 +22,7 @@ runExampleSmallstep = do
 runExampleBigstep :: IO ()
 runExampleBigstep = do
   st <- evalRandIO $ initState 2
-  (scores, st) <- bigstepRunGame examplePlayers st game Nil
+  (scores, st) <- bigstepRunGame examplePlayers st game
   print scores
 
 main = do

@@ -450,25 +450,29 @@ smallstepRunGame players gs g = do
   (g', gs') <- stepGame players gs g
   smallstepRunGame players gs' g'
 
-bigstepRunGame ::
+bigstepRun ::
      MonadRandom m
   => (Player -> PlayerImpl m r)
   -> GameState
   -> Game a
   -> ContStack a r
   -> m (a, GameState)
-bigstepRunGame _ gs (Pure x) _ = return (x, gs)
-bigstepRunGame players gs (Bind x f) cont = do
-  (x', gs') <- bigstepRunGame players gs x (Cons f cont)
-  bigstepRunGame players gs' (f x') cont
-bigstepRunGame _ gs (ChangeState u) _ = return $ runState u gs
-bigstepRunGame _ gs (RandomChoice xs) _ = do
+bigstepRun _ gs (Pure x) _ = return (x, gs)
+bigstepRun players gs (Bind x f) cont = do
+  (x', gs') <- bigstepRun players gs x (Cons f cont)
+  bigstepRun players gs' (f x') cont
+bigstepRun _ gs (ChangeState u) _ = return $ runState u gs
+bigstepRun _ gs (RandomChoice xs) _ = do
   x <- getRandomChoice xs
   return $ (x, gs)
-bigstepRunGame players gs (PlayerChoice p c) cont = do
+bigstepRun players gs (PlayerChoice p c) cont = do
   choice <- players p c gs (runCont cont)
   return (choice, gs)
-bigstepRunGame players gs (Note _ m) cont = bigstepRunGame players gs m cont
+bigstepRun players gs (Note _ m) cont = bigstepRun players gs m cont
+
+bigstepRunGame ::
+     MonadRandom m => (Player -> PlayerImpl m a) -> GameState -> Game a -> m (a, GameState)
+bigstepRunGame players gs m = bigstepRun players gs m Nil
 
 getState :: (GameState -> a) -> Game a
 getState = changeState . gets
