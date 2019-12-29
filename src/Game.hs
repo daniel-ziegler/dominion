@@ -3,17 +3,17 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 
 module Game
   ( Player(Player)
-  , Game()
   , PlayerImpl
   , changeState
   , randomChoice
   , playerChoice
   , note
-  , bigstepRunGame
-  , smallstepRunGame
+  --, bigstepRunGame
+  --, smallstepRunGame
   , getState
   , getRandomChoice
   , modifyState
@@ -32,46 +32,24 @@ newtype Player =
   Player Int
   deriving (Eq, Ord, Show, Ix)
 
-data Game gs mv a where
-  Note :: String -> Game gs mv a -> Game gs mv a
-  Pure :: a -> Game gs mv a
-  Bind :: Game gs mv a -> (a -> Game gs mv b) -> Game gs mv b
-  ChangeState :: State gs a -> Game gs mv a
-  RandomChoice :: NonEmpty a -> Game gs mv a
-  PlayerChoice :: Player -> NonEmpty mv -> Game gs mv mv
-
-instance Functor (Game gs mv) where
-  fmap f g = Bind g (Pure . f)
-
-instance Applicative (Game gs mv) where
-  pure = Pure
-  gf <*> ga = Bind ga (\a -> Bind gf (\f -> return $ f a))
-
-instance Monad (Game gs mv) where
-  x >>= f = Bind x f
-
-{- Use these in case we want to switch to a GameMonad typeclass -}
-changeState :: State gs a -> Game gs mv a
-changeState = ChangeState
-
-randomChoice :: NonEmpty a -> Game gs mv a
-randomChoice = RandomChoice
-
-playerChoice :: Player -> NonEmpty mv -> Game gs mv mv
-playerChoice = PlayerChoice
-
-note :: String -> Game gs mv a -> Game gs mv a
-note = Note
+class Monad g =>
+      GameMonad gs mv g
+  where
+  changeState :: State gs a -> g a
+  randomChoice :: NonEmpty a -> g a
+  playerChoice :: Player -> NonEmpty mv -> g mv
+  note :: String -> g a -> g a
 
 -- TODO: Observation instead of game state
 -- The last parameter is the "rest of the game" continuation
-type PlayerImpl gs mv m r = NonEmpty mv -> gs -> (mv -> Game gs mv r) -> m mv
+type PlayerImpl gs mv m r = forall g. GameMonad g => NonEmpty mv -> gs -> (mv -> g gs mv r) -> m mv
 
 getRandomChoice :: MonadRandom m => NonEmpty a -> m a
 getRandomChoice xs = do
   i <- getRandomR (0, NE.length xs - 1)
   return $ xs NE.!! i
 
+{-
 data ContStack gs mv a r where
   Nil :: ContStack gs mv a a
   Cons :: forall gs mv a b r. (a -> Game gs mv b) -> ContStack gs mv b r -> ContStack gs mv a r
@@ -137,12 +115,46 @@ bigstepRun players gs (Note _ m) cont = bigstepRun players gs m cont
 bigstepRunGame ::
      MonadRandom m => (Player -> PlayerImpl gs mv m a) -> gs -> Game gs mv a -> m (a, gs)
 bigstepRunGame players gs m = bigstepRun players gs m Nil
+-}
 
-getState :: (gs -> a) -> Game gs mv a
+instance (forall gs mv. MonadRandom (g gs mv)) => GameMonad g where
+  changeState u = return $ runState u
+  randomChoice = undefined
+  playerChoice = undefined
+  note = undefined
+  
+
+getState :: GameMonad g => (gs -> a) -> g gs mv a
 getState = changeState . gets
 
-modifyState :: (gs -> gs) -> Game gs mv ()
+modifyState :: GameMonad g => (gs -> gs) -> g gs mv ()
 modifyState = changeState . modify
+
+{-
+data Game gs mv a where
+  Pure :: a -> Game gs mv a
+  Bind :: Game gs mv a -> (a -> Game gs mv b) -> Game gs mv b
+  ChangeState :: State gs a -> Game gs mv a
+  RandomChoice :: NonEmpty a -> Game gs mv a
+  PlayerChoice :: Player -> NonEmpty mv -> Game gs mv mv
+  Note :: String -> Game gs mv a -> Game gs mv a
+
+instance Functor (Game gs mv) where
+  fmap f g = Bind g (Pure . f)
+
+instance Applicative (Game gs mv) where
+  pure = Pure
+  gf <*> ga = Bind ga (\a -> Bind gf (\f -> return $ f a))
+
+instance Monad (Game gs mv) where
+  x >>= f = Bind x f
+
+instance GameMonad Game where
+  changeState = ChangeState
+  randomChoice = RandomChoice
+  playerChoice = PlayerChoice
+  note = Note
+-}
 
 universe :: (Bounded a, Enum a) => [a]
 universe = [minBound .. maxBound]
@@ -161,3 +173,4 @@ inverseMap f = \k -> Map.lookup k dict
 
 completeArray :: (Ix i, Bounded i) => [(i, e)] -> Array i e
 completeArray = array (minBound, maxBound)
+
