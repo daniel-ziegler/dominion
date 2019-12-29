@@ -72,16 +72,6 @@ getRandomChoice xs = do
   i <- getRandomR (0, NE.length xs - 1)
   return $ xs NE.!! i
 
-data ContStack gs mv a r where
-  Nil :: ContStack gs mv a a
-  Cons :: forall gs mv a b r. (a -> Game gs mv b) -> ContStack gs mv b r -> ContStack gs mv a r
-
-runCont :: ContStack gs mv a r -> a -> Game gs mv r
-runCont Nil x = return x
-runCont (Cons f fs) x = do
-  v <- f x
-  runCont fs v
-
 stepGame ::
      MonadRandom m => (Player -> PlayerImpl gs mv m r) -> gs -> Game gs mv r -> m (Game gs mv r, gs)
 stepGame _ gs (Pure r) = return (Pure r, gs)
@@ -119,24 +109,24 @@ bigstepRun ::
   => (Player -> PlayerImpl gs mv m r)
   -> gs
   -> Game gs mv a
-  -> ContStack gs mv a r
+  -> (a -> Game gs mv r)
   -> m (a, gs)
 bigstepRun _ gs (Pure x) _ = return (x, gs)
 bigstepRun players gs (Bind x f) cont = do
-  (x', gs') <- bigstepRun players gs x (Cons f cont)
+  (x', gs') <- bigstepRun players gs x (f >=> cont)
   bigstepRun players gs' (f x') cont
 bigstepRun _ gs (ChangeState u) _ = return $ runState u gs
 bigstepRun _ gs (RandomChoice xs) _ = do
   x <- getRandomChoice xs
   return $ (x, gs)
 bigstepRun players gs (PlayerChoice p c) cont = do
-  choice <- players p c gs (runCont cont)
+  choice <- players p c gs cont
   return (choice, gs)
 bigstepRun players gs (Note _ m) cont = bigstepRun players gs m cont
 
 bigstepRunGame ::
      MonadRandom m => (Player -> PlayerImpl gs mv m a) -> gs -> Game gs mv a -> m (a, gs)
-bigstepRunGame players gs m = bigstepRun players gs m Nil
+bigstepRunGame players gs m = bigstepRun players gs m return
 
 getState :: (gs -> a) -> Game gs mv a
 getState = changeState . gets
